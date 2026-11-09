@@ -25,7 +25,46 @@ PostgreSQL 聚合 ──▶ /api/admin/build-knowledge ──▶ Workers AI ─�
 | `src/embeddings.ts` | Workers AI 向量化、Vectorize upsert / query |
 | `src/knowledge.ts` | 类目 / 供应商 / 价格带 / 选购指南知识文档生成 |
 | `scripts/ingest.mjs` | 本地导入脚本：读 JSON、分批推送、断点、重试、构建知识库 |
+| `scripts/init-cloudflare.*` / `deploy-cloudflare.*` | Windows 一键初始化云资源 / 一键部署（`.cmd` 入口 + `.ps1` 实现） |
 | `public/` | 登录、商品列表、检索、对话、运维控制台 |
+
+## 零、Windows 一键脚本（推荐）
+
+`.cmd` 是入口（自动加 `-ExecutionPolicy Bypass`，不用改系统执行策略），`.ps1` 是实现，需要 Windows PowerShell 5.1+。它们把下面第 1~5 节的手动命令封装成**幂等流程**，重复运行不会重复创建资源。
+
+**前置**：Node.js 20+、`npm install`、`npx wrangler login`、一个可被 Cloudflare 访问的 PostgreSQL、且 `hesen.dpdns.org` zone 在 Cloudflare 为 Active（见第 4 节）。
+
+```powershell
+# ① 初始化云资源（只跑一次即可；-WhatIf 先演练，不联网、不写文件）
+.\scripts\init-cloudflare.cmd -WhatIf
+.\scripts\init-cloudflare.cmd -DatabaseUrl "postgres://USER:PASS@HOST:5432/DBNAME?sslmode=require"
+
+# ② 一键部署：前置检查 → typecheck + SQL 登记校验 → deploy → 健康检查
+.\scripts\deploy-cloudflare.cmd
+
+# ③ 首次上线再加数据（DDL + 5985 条 SKU 向量化 + 知识库，Workers AI 计费）
+.\scripts\deploy-cloudflare.cmd -WithIngest
+```
+
+初始化脚本会：创建 `product-catalog` 索引（1024 / cosine）与 5 个 metadata 索引；创建 Hyperdrive 并**自动把 ID 回填到 `wrangler.jsonc`**；用 `wrangler secret bulk` 一次上传 4 个 secrets。secrets 优先读 `.dev.vars`（含你手动改过的值），缺失项才随机生成并追加回 `.dev.vars`，以保证 `ADMIN_TOKEN` 和导入脚本始终一致；临时 JSON 用完即删，且放在已被忽略的 `.wrangler/` 下。
+
+| 参数 | 脚本 | 说明 |
+| --- | --- | --- |
+| `-DatabaseUrl` | init | PostgreSQL 连接串，创建 Hyperdrive 并回填 ID |
+| `-HyperdriveId` | init | 已有 Hyperdrive 配置：直接回填，不新建 |
+| `-JwtSecret` `-AdminToken` `-AdminEmail` `-AdminPassword` | init | 覆盖 `.dev.vars` 中的对应值 |
+| `-ForceSecrets` | init | 覆盖已存在的 secrets（默认跳过） |
+| `-SkipVectorize` `-SkipHyperdrive` `-SkipSecrets` | init | 分段执行 |
+| `-WhatIf` | 两者 | 只打印将执行的命令，不联网不写文件 |
+| `-WithIngest` | deploy | 部署后执行迁移 + 全量导入 + 知识库（计费） |
+| `-ApiBase` | deploy | 健康检查 / 导入地址，默认 `https://ai.hesen.dpdns.org` |
+| `-SkipHealthCheck` | deploy | 跳过健康检查 |
+
+> 脚本内容全为 ASCII：Windows PowerShell 5.1 读取无 BOM 的 `.ps1` 时按 ANSI 解码，中文会乱码。说明文字放在本文档。
+> 连接串里的密码若含 `&`、`@`、空格等特殊字符，请先 URL 编码并用双引号包裹；`-WhatIf` 可先确认命令文本。
+> 证书签发期间健康检查可能失败，脚本会重试 3 次并提示改用 `workers.dev` 备用入口。
+
+以下几个小节是脚本的等价手动步骤，便于排查或改造。
 
 ## 一、前置准备
 
@@ -44,11 +83,11 @@ npx wrangler login
 npx wrangler vectorize create product-catalog --dimensions=1024 --metric=cosine
 
 # metadata 索引必须在写入向量之前创建，否则 filter 不生效（且已写入的向量需重新 upsert）
-npx wrangler vectorize create-metadata-index product-catalog --property-name=kind --type=string
-npx wrangler vectorize create-metadata-index product-catalog --property-name=status --type=string
-npx wrangler vectorize create-metadata-index product-catalog --property-name=category --type=string
-npx wrangler vectorize create-metadata-index product-catalog --property-name=tenant --type=string
-npx wrangler vectorize create-metadata-index product-catalog --property-name=price --type=number
+npx wrangler vectorize create-metadata-index product-catalog --propertyName=kind --type=string
+npx wrangler vectorize create-metadata-index product-catalog --propertyName=status --type=string
+npx wrangler vectorize create-metadata-index product-catalog --propertyName=category --type=string
+npx wrangler vectorize create-metadata-index product-catalog --propertyName=tenant --type=string
+npx wrangler vectorize create-metadata-index product-catalog --propertyName=price --type=number
 npx wrangler vectorize list-metadata-index product-catalog
 ```
 
@@ -67,7 +106,7 @@ npx wrangler hyperdrive create product-pg \
 
 ### 3. 配置密钥
 
-本地开发：项目已提供 `.dev.vars` 初版（含随机本地密钥，按文件内注释修改即可；也可从 `.dev.vars.example` 重新复制）。该文件已被 `.gitignore` 忽略。生产：
+本地开发：项目已提供 `.dev.vars` 初版（含随机本地密钥，按文件内注释修改即可；也可从 `.dev.vars.example` 重新复制）。该文件已被 `.gitignore` 忽略，Windows 一键脚本会直接读取它作为生产 secrets 来源。生产（手动方式）：
 
 ```bash
 npx wrangler secret put JWT_SECRET
@@ -166,7 +205,7 @@ npm run ingest -- --dry-run          # 只看数据量，不写任何东西
 
 ## 五、需要你后续提供 / 确认
 
-1. PostgreSQL 连接串（用于创建 Hyperdrive），以及回填 `wrangler.jsonc` 里的 Hyperdrive ID。
+1. PostgreSQL 连接串：传给 `init-cloudflare.cmd -DatabaseUrl` 即可，脚本会创建 Hyperdrive 并自动回填 `wrangler.jsonc` 的 `hyperdrive[0].id`；也可手动执行第 2 节命令后自行填写。
 2. 自定义域名已定为 `ai.hesen.dpdns.org`：请确认 `hesen.dpdns.org` zone 在 Cloudflare 已是 Active、NS 已切到 Cloudflare；另外确认是否给管理接口再加一层 Cloudflare Access 保护（当前仅 ADMIN_TOKEN）。
 3. 是否改用外部 LLM / AI Gateway：模型 ID 集中在 `src/config.ts` 与 `wrangler.jsonc` 的 `vars`，改 `CHAT_MODEL` 即可；embedding 模型若更换，必须新建对应维度的 Vectorize 索引并 `--force` 全量重建。
 4. 源数据更新频率：目前是手动导入，若要定时同步可加 Cron Triggers 或在 CI 里跑 `npm run ingest`。

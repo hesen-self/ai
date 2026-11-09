@@ -25,6 +25,7 @@
 			"globs": [
 				"**/*.sql"
 			],
+			"fallthrough": false,
 		},
 	],
 	"assets": {
@@ -47,7 +48,7 @@
 	"hyperdrive": [
 		{
 			"binding": "HYPERDRIVE",
-			"id": "REPLACE_WITH_YOUR_HYPERDRIVE_ID",
+			"id": "04964b18b89d442d8f5d361c022840b5",
 		},
 		{
 			"binding": "NeonDB",
