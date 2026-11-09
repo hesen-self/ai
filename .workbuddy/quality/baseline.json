@@ -1,0 +1,28 @@
+{
+  "generatedAt": "2026-11-09T17:32:29+08:00",
+  "score": 61,
+  "counts": {
+    "error": 0,
+    "warn": 17,
+    "info": 10
+  },
+  "fingerprints": [
+    "bindings-declared|src/types.ts|wrangler.jsonc 绑定 NeonDB 未在 Env 接口中声明",
+    "docs-paths|README.md|文档引用的路径不存在：`.workbuddy/quality/baseline.json`",
+    "explicit-any|src/db.ts|显式 any 绕过了 strict 类型检查",
+    "explicit-any|src/db.ts|显式 any 绕过了 strict 类型检查",
+    "explicit-any|src/db.ts|显式 any 绕过了 strict 类型检查",
+    "explicit-any|src/db.ts|显式 any 绕过了 strict 类型检查",
+    "explicit-any|src/db.ts|显式 any 绕过了 strict 类型检查",
+    "explicit-any|src/db.ts|显式 any 绕过了 strict 类型检查",
+    "explicit-any|src/db.ts|显式 any 绕过了 strict 类型检查",
+    "explicit-any|src/db.ts|显式 any 绕过了 strict 类型检查",
+    "explicit-any|src/embeddings.ts|显式 any 绕过了 strict 类型检查",
+    "explicit-any|src/routes/chat.ts|显式 any 绕过了 strict 类型检查",
+    "explicit-any|src/routes/chat.ts|显式 any 绕过了 strict 类型检查",
+    "explicit-any|src/routes/chat.ts|显式 any 绕过了 strict 类型检查",
+    "explicit-any|src/routes/chat.ts|显式 any 绕过了 strict 类型检查",
+    "explicit-any|src/routes/chat.ts|显式 any 绕过了 strict 类型检查",
+    "explicit-any|src/types.ts|显式 any 绕过了 strict 类型检查"
+  ]
+}

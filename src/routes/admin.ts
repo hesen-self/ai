@@ -1,0 +1,132 @@
+import { Hono } from 'hono';
+import { requireAdmin } from '../auth';
+import {
+  CHAT_MODEL,
+  EMBED_BATCH,
+  EMBEDDING_DIMENSIONS,
+  EMBEDDING_METRIC,
+  EMBEDDING_MODEL,
+  INDEX_NAME,
+  INGEST_BATCH,
+  METADATA_INDEXES,
+  NS_KB,
+  NS_SKU,
+} from '../config';
+import {
+  getFacets,
+  getProductHashes,
+  markProductsSynced,
+  migrate,
+  upsertProducts,
+  withSql,
+} from '../db';
+import { embedTexts, upsertSkuVectors } from '../embeddings';
+import { buildKnowledgeBatch } from '../knowledge';
+import { normalizeBatch } from '../normalize';
+import { SCHEMA_SQL } from '../schema';
+import type { HonoEnv } from '../types';
+
+const router = new Hono<HonoEnv>();
+
+router.use('*', requireAdmin);
+
+router.get('/status', async (c) => {
+  const facets = await withSql(c.env, (sql) => getFacets(sql));
+  const extra = await withSql(c.env, (sql) =>
+    sql.unsafe(
+      `select
+        (select count(*)::int from products where synced_at is null) as unsynced_products,
+        (select count(*)::int from knowledge_docs) as knowledge_docs,
+        (select count(*)::int from knowledge_docs where synced_at is null) as unsynced_knowledge,
+        (select count(*)::int from app_users) as users,
+        (select count(*)::int from chat_messages) as messages`,
+    ),
+  );
+  return c.json({
+    ok: true,
+    config: {
+      embeddingModel: c.env.EMBEDDING_MODEL || EMBEDDING_MODEL,
+      dimensions: EMBEDDING_DIMENSIONS,
+      metric: EMBEDDING_METRIC,
+      chatModel: c.env.CHAT_MODEL || CHAT_MODEL,
+      indexName: c.env.VECTORIZE_INDEX_NAME || INDEX_NAME,
+      namespaces: [NS_SKU, NS_KB],
+      metadataIndexes: METADATA_INDEXES,
+      ingestBatch: INGEST_BATCH,
+      embedBatch: EMBED_BATCH,
+    },
+    database: {
+      ...(facets as Record<string, unknown>),
+      ...((extra[0] as Record<string, unknown>) ?? {}),
+    },
+  });
+});
+
+/** 返回完整 DDL，便于用 psql 或数据库控制台手动执行。 */
+router.get('/schema', (c) =>
+  c.text(SCHEMA_SQL, 200, { 'Content-Type': 'text/plain; charset=utf-8' }),
+);
+
+router.post('/migrate', async (c) => {
+  const result = await migrate(c.env);
+  return c.json({ ok: true, ...result });
+});
+
+/**
+ * 接收 docs/*.json 的一批原始记录：规范化 → 写 PG → 向量化 → upsert Vectorize。
+ * 用 content_hash + synced_at 保证重跑幂等；失败批下次会自动重新向量化。
+ */
+router.post('/ingest', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const items = Array.isArray(body.items) ? body.items : [];
+  if (!items.length) return c.json({ error: 'items 不能为空' }, 400);
+  if (items.length > INGEST_BATCH * 2) {
+    return c.json({ error: `单批最多 ${INGEST_BATCH * 2} 条` }, 413);
+  }
+  const force = body.force === true;
+  const { products, rejected } = normalizeBatch(items);
+  if (!products.length) return c.json({ received: items.length, upserted: 0, embedded: 0, rejected });
+
+  const result = await withSql(c.env, async (sql) => {
+    // 必须先读旧 hash：upsert 之后 content_hash 已被刷新。
+    const existing = await getProductHashes(sql, products.map((p) => p.skuCode));
+    const pending = products.filter((p) => {
+      if (force) return true;
+      const previous = existing.get(p.skuCode);
+      return !previous || previous.hash !== p.contentHash || !previous.syncedAt;
+    });
+
+    await upsertProducts(sql, products);
+
+    const mutationIds: string[] = [];
+    for (let i = 0; i < pending.length; i += EMBED_BATCH) {
+      const chunk = pending.slice(i, i + EMBED_BATCH);
+      const vectors = await embedTexts(c.env, chunk.map((p) => p.embedText));
+      const mutationId = await upsertSkuVectors(c.env, chunk, vectors);
+      if (mutationId) mutationIds.push(mutationId);
+    }
+    if (pending.length) await markProductsSynced(sql, pending.map((p) => p.skuCode));
+
+    return {
+      received: items.length,
+      upserted: products.length,
+      embedded: pending.length,
+      skipped: products.length - pending.length,
+      rejected,
+      mutationIds,
+    };
+  });
+  return c.json({ ok: true, ...result });
+});
+
+/** 分页构建商品知识库（类目 / 供应商 / 价格带 / 选购指南）。 */
+router.post('/build-knowledge', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const offset = Math.max(0, Number(body.offset) || 0);
+  const limit = Math.min(200, Math.max(1, Number(body.limit) || 120));
+  const force = body.force === true;
+  const result = await buildKnowledgeBatch(c.env, offset, limit, force);
+  return c.json({ ok: true, ...result });
+});
+
+export default router;

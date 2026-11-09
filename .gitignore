@@ -1,0 +1,13 @@
+node_modules/
+.wrangler/
+.dev.vars
+*.log
+.DS_Store
+dist/
+worker-configuration.d.ts
+.env
+
+# 开发治理 Agent：本地报告与个人习惯数据不入库（规则、基线、Skill 定义仍随仓库提交）
+.workbuddy/quality/latest.json
+.workbuddy/quality/reports/
+.workbuddy/habits/

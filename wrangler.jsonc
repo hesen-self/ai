@@ -1,0 +1,62 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "product-ai",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-11-09",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	// 自定义域名：要求 hesen.dpdns.org 已作为 Active zone 托管在当前 Cloudflare 账号
+	"routes": [
+		{
+			"pattern": "ai.hesen.dpdns.org",
+			"custom_domain": true,
+		},
+	],
+	// 配置 routes 后 workers.dev 默认关闭；显式保留，便于证书签发期间验证
+	"workers_dev": true,
+	"observability": {
+		"enabled": true,
+	},
+	// 把 sql/*.sql 作为文本模块打包，让 src/schema.ts 可以直接 import DDL 文件
+	"rules": [
+		{
+			"type": "Text",
+			"globs": [
+				"**/*.sql"
+			],
+		},
+	],
+	"assets": {
+		"directory": "./public",
+		"binding": "ASSETS",
+		"not_found_handling": "single-page-application",
+		"run_worker_first": [
+			"/api/*"
+		],
+	},
+	"ai": {
+		"binding": "AI",
+	},
+	"vectorize": [
+		{
+			"binding": "VECTORIZE",
+			"index_name": "product-catalog",
+		},
+	],
+	"hyperdrive": [
+		{
+			"binding": "HYPERDRIVE",
+			"id": "REPLACE_WITH_YOUR_HYPERDRIVE_ID",
+		},
+		{
+			"binding": "NeonDB",
+			"id": "04964b18b89d442d8f5d361c022840b5"
+		},
+	],
+	"vars": {
+		"EMBEDDING_MODEL": "@cf/baai/bge-m3",
+		"CHAT_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+		"VECTORIZE_INDEX_NAME": "product-catalog",
+	},
+}

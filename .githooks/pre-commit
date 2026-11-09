@@ -1,0 +1,5 @@
+#!/bin/sh
+# 由 npm run agent:hooks 生成：提交前执行开发治理门禁
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$ROOT" || exit 0
+node scripts/dev-agent.mjs guard --hook --quiet

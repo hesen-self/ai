@@ -1,0 +1,35 @@
+# ============================================================
+# 本地开发环境变量模板：复制为 .dev.vars 后填写
+# .dev.vars 已被 .gitignore 忽略；生产请用 `npx wrangler secret put <NAME>` 设置。
+# 生成随机密钥：node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+# ============================================================
+
+# --- 必需：会话 JWT 签名密钥（>=32 位随机串） ---
+JWT_SECRET=replace-with-a-long-random-string-at-least-32-chars
+
+# --- 必需：管理接口与导入脚本令牌（请求头 X-Admin-Token） ---
+ADMIN_TOKEN=replace-with-another-long-random-string
+
+# --- 可选：执行 /api/admin/migrate 时写入的初始管理员账号（密码 >=8 位） ---
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=ChangeMe_123456
+
+# --- scripts/ingest.mjs 专用（导入脚本读取，非 Worker 变量） ---
+API_BASE=http://127.0.0.1:8787
+# 对已部署 Worker 跑导入：
+# ADMIN_TOKEN=xxx API_BASE=https://ai.hesen.dpdns.org npm run ingest:migrate
+
+# --- 可选覆盖：不写则使用 wrangler.jsonc 的 vars / src/config.ts 默认值 ---
+# EMBEDDING_MODEL=@cf/baai/bge-m3
+# CHAT_MODEL=@cf/meta/llama-3.3-70b-instruct-fp8-fast
+# VECTORIZE_INDEX_NAME=product-catalog
+
+# ============================================================
+# PostgreSQL / Hyperdrive 本地连接（注意：不是 .dev.vars 变量）
+# ------------------------------------------------------------
+#   1) 推荐在 wrangler.jsonc 的 hyperdrive[0] 增加：
+#      "localConnectionString": "postgres://USER:PASSWORD@HOST:5432/DBNAME?sslmode=require"
+#   2) 或启动前 export（前缀 CLOUDFLARE_，绑定名 HYPERDRIVE）：
+#      export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE="postgres://..."
+#   写进 .dev.vars 不会生效；`wrangler dev --remote` 会直连生产数据，谨慎。
+# ============================================================

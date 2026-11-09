@@ -1,0 +1,35 @@
+{
+  "name": "cf-product-ai",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Workers + Vectorize + Hyperdrive + Workers AI 商品知识库与对话推荐系统",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "sql:check": "node scripts/check-sql.mjs",
+    "predeploy": "npm run sql:check",
+    "typecheck": "tsc --noEmit",
+    "pretypecheck": "npm run sql:check",
+    "cf-typegen": "wrangler types",
+    "ingest": "node scripts/ingest.mjs",
+    "ingest:migrate": "node scripts/ingest.mjs --migrate",
+    "ingest:knowledge": "node scripts/ingest.mjs --knowledge-only",
+    "agent": "node scripts/dev-agent.mjs",
+    "agent:check": "node scripts/dev-agent.mjs check",
+    "agent:guard": "node scripts/dev-agent.mjs guard",
+    "agent:baseline": "node scripts/dev-agent.mjs baseline",
+    "agent:log": "node scripts/dev-agent.mjs log",
+    "agent:digest": "node scripts/dev-agent.mjs digest --days=7",
+    "agent:hooks": "node scripts/dev-agent.mjs install-hooks"
+  },
+  "dependencies": {
+    "hono": "^4.13.17",
+    "postgres": "^3.4.9"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261109.1",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.158.0"
+  }
+}

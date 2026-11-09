@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>云铺 · 商品知识库与智能导购</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="login-view" class="login-view">
+    <div class="login-card">
+      <div class="brand-mark">云</div>
+      <h1>云铺 · 智能商品库</h1>
+      <p class="muted">Cloudflare Workers AI × Vectorize × Hyperdrive</p>
+
+      <div class="tabs" id="auth-tabs">
+        <button class="tab active" data-auth="login">登录</button>
+        <button class="tab" data-auth="register">注册</button>
+      </div>
+
+      <form id="auth-form">
+        <label>邮箱<input id="auth-email" type="email" autocomplete="email" placeholder="you@example.com" required /></label>
+        <label id="display-name-field" hidden>昵称<input id="auth-name" type="text" placeholder="怎么称呼你" /></label>
+        <label>密码<input id="auth-password" type="password" autocomplete="current-password" placeholder="至少 8 位" required minlength="8" /></label>
+        <button class="btn primary block" id="auth-submit" type="submit">登录</button>
+      </form>
+      <p id="auth-error" class="error-text" role="alert"></p>
+      <p class="hint">管理员账号由 <code>ADMIN_EMAIL</code> / <code>ADMIN_PASSWORD</code> 在迁移时写入。</p>
+    </div>
+  </div>
+
+  <div id="shell" hidden>
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark small">云</span><span>云铺 · 智能商品库</span></div>
+      <nav class="nav" id="main-nav">
+        <button class="nav-item active" data-view="products">商品列表</button>
+        <button class="nav-item" data-view="search">商品检索</button>
+        <button class="nav-item" data-view="chat">对话推荐</button>
+        <button class="nav-item" data-view="admin">运维</button>
+      </nav>
+      <div class="user-area"><span id="user-chip" class="chip"></span><button class="btn ghost" id="logout-btn">退出</button></div>
+    </header>
+
+    <main>
+      <!-- 商品列表 -->
+      <section id="view-products" class="panel">
+        <div class="panel-head"><h2>商品列表</h2><span id="product-stats" class="muted"></span></div>
+        <div class="toolbar">
+          <input id="filter-q" type="search" placeholder="名称 / 规格 / 编码关键词" />
+          <select id="filter-category"><option value="">全部类目</option></select>
+          <select id="filter-tenant"><option value="">全部供应商</option></select>
+          <select id="filter-sort">
+            <option value="updated">最近更新</option>
+            <option value="popular">热度优先</option>
+            <option value="recommended">推荐优先</option>
+            <option value="price_asc">价格从低到高</option>
+            <option value="price_desc">价格从高到低</option>
+            <option value="name">名称排序</option>
+          </select>
+          <label class="check"><input id="filter-recommended" type="checkbox" /> 仅推荐</label>
+          <button class="btn ghost" id="filter-reset">重置</button>
+        </div>
+        <div id="product-grid" class="product-grid"></div>
+        <div class="pager">
+          <button class="btn ghost" id="page-prev">上一页</button>
+          <span id="page-info" class="muted"></span>
+          <button class="btn ghost" id="page-next">下一页</button>
+        </div>
+      </section>
+
+      <!-- 商品检索 -->
+      <section id="view-search" class="panel" hidden>
+        <div class="panel-head"><h2>商品检索</h2><span class="muted">关键词 + 向量语义混合召回（RRF 融合）</span></div>
+        <div class="search-box">
+          <input id="search-input" type="search" placeholder="例如：预算 500 元以内的香肠去皮机 / 不锈钢榨汁设备" />
+          <button class="btn primary" id="search-btn">检索</button>
+        </div>
+        <div class="row-between">
+          <div class="segmented" id="search-modes">
+            <button class="seg active" data-mode="hybrid">混合</button>
+            <button class="seg" data-mode="semantic">语义</button>
+            <button class="seg" data-mode="keyword">关键词</button>
+          </div>
+          <div class="chips" id="search-examples">
+            <button class="chip-btn" data-q="香肠去皮机">香肠去皮机</button>
+            <button class="chip-btn" data-q="榨汁机 不锈钢">榨汁机 不锈钢</button>
+            <button class="chip-btn" data-q="100元以内的包装设备">100元以内的包装设备</button>
+            <button class="chip-btn" data-q="农业灌溉节水设备">农业灌溉节水设备</button>
+          </div>
+        </div>
+        <p id="search-summary" class="muted"></p>
+        <div id="search-results" class="product-grid"></div>
+      </section>
+
+      <!-- 对话推荐 -->
+      <section id="view-chat" class="panel" hidden>
+        <div class="panel-head"><h2>对话推荐</h2><span class="muted">Vectorize 召回 + 知识库 + Workers AI 生成</span></div>
+        <div class="chat-layout">
+          <aside class="session-panel">
+            <button class="btn primary block" id="new-session-btn">＋ 新建对话</button>
+            <div id="session-list" class="session-list"></div>
+          </aside>
+          <div class="chat-main">
+            <div id="chat-messages" class="chat-messages"></div>
+            <div class="chat-input">
+              <input id="chat-input" type="text" placeholder="说说你的采购需求，例如：想要一台小型榨汁机，预算 2000 元" />
+              <button class="btn primary" id="chat-send">发送</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 运维 -->
+      <section id="view-admin" class="panel" hidden>
+        <div class="panel-head"><h2>运维控制台</h2><span class="muted">需要 ADMIN_TOKEN</span></div>
+        <div class="toolbar">
+          <input id="admin-token" type="password" placeholder="ADMIN_TOKEN" />
+          <button class="btn ghost" id="admin-status-btn">刷新状态</button>
+          <button class="btn ghost" id="admin-migrate-btn">执行迁移</button>
+          <button class="btn ghost" id="admin-knowledge-btn">构建知识库</button>
+          <button class="btn ghost" id="admin-schema-btn">查看 DDL</button>
+        </div>
+        <p class="hint">数据初始化请使用本地脚本：<code>npm run ingest:migrate</code> → <code>npm run ingest</code>。Vectorize 写入为最终一致，导入后稍等片刻再检索。</p>
+        <pre id="admin-output" class="output">等待操作…</pre>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

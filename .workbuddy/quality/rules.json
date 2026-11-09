@@ -1,0 +1,57 @@
+{
+  "_说明": "开发治理 Agent 的规则配置。severity 可选 error / warn / info / off；error 会被 guard 与 pre-commit 门禁拦截（仅拦基线之后新增的）。改完直接重跑 npm run agent:check 生效。",
+  "thresholds": {
+    "maxFileLines": 600,
+    "maxTodoCount": 20,
+    "maxStagedChangedLines": 800
+  },
+  "severity": {
+    "typescript": "error",
+    "schema-sync": "error",
+    "config-sync": "error",
+    "secret-literal": "error",
+    "process-env": "error",
+    "batch-sync": "warn",
+    "bindings-declared": "warn",
+    "docs-paths": "warn",
+    "routes-mounted": "warn",
+    "debug-log": "warn",
+    "explicit-any": "warn",
+    "ts-suppress": "warn",
+    "large-file": "warn",
+    "staged-size": "warn",
+    "unsafe-html": "info",
+    "swallowed-error": "info",
+    "todo-debt": "info",
+    "sql-template": "info"
+  },
+  "_规则含义": {
+    "typescript": "tsc --noEmit 类型检查",
+    "schema-sync": "schema.sql 与 sql/*.sql 的表/列一致性",
+    "config-sync": "src/config.ts 与 wrangler.jsonc vars 的模型和索引名一致",
+    "secret-literal": "疑似硬编码凭据",
+    "process-env": "Workers 中使用 process.env（应走 c.env）",
+    "batch-sync": "导入脚本与 Worker 的默认批量一致",
+    "bindings-declared": "wrangler 绑定已在 src/types.ts 的 Env 中声明",
+    "docs-paths": "README 引用的项目路径真实存在",
+    "routes-mounted": "src/routes/*.ts 均在 src/index.ts 挂载",
+    "debug-log": "src 中的 console.log",
+    "explicit-any": "显式 any",
+    "ts-suppress": "ts-ignore / eslint-disable 等抑制注释",
+    "large-file": "单文件行数超阈值",
+    "staged-size": "单次暂存变更行数超阈值",
+    "unsafe-html": "前端 innerHTML 直出（需人工确认转义）",
+    "swallowed-error": "异常被静默吞掉",
+    "todo-debt": "TODO/FIXME 总量超阈值",
+    "sql-template": "sql.unsafe 中的动态 SQL 拼接"
+  },
+  "off": [],
+  "excludePaths": [
+    "scripts/dev-agent.mjs",
+    "scripts/lib/**",
+    "dist/**",
+    "node_modules/**",
+    "public/vendor/**"
+  ],
+  "_exclude说明": "治理工具自身由 node --check 与自测覆盖，不纳入业务代码扫描，避免规则字面量自我误报。"
+}
