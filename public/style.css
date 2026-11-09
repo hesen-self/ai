@@ -121,6 +121,7 @@ main { max-width: 1440px; margin: 0 auto; padding: 26px; }
 .search-box { display: flex; gap: 10px; margin-bottom: 14px; }
 .search-box input { margin: 0; padding: 13px 16px; font-size: 15px; }
 .row-between { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; align-items: center; }
+.engine-row { margin-top: 10px; }
 .segmented { display: flex; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; padding: 3px; }
 .seg { background: none; border: 0; color: var(--muted); padding: 7px 18px; border-radius: 7px; }
 .seg.active { background: var(--primary); color: #0d1020; font-weight: 650; }

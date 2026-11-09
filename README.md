@@ -1,6 +1,6 @@
 # 云铺 · Cloudflare 商品知识库与智能导购
 
-基于 **Cloudflare Workers + Workers AI + Vectorize + Hyperdrive(PostgreSQL)** 的全栈项目：把 `docs/` 下的商品 JSON 导入向量库与关系库，提供登录、商品列表、混合检索、商品知识库与对话式推荐。前端是零构建的静态页面，随 Worker 一起部署。
+基于 **Cloudflare Workers + Workers AI + Vectorize + Hyperdrive(PostgreSQL)** 的全栈项目：把 `docs/` 下的商品 JSON 导入向量库与关系库，提供登录、商品列表、混合检索、商品知识库与对话式推荐。前端是零构建的静态页面，随 Worker 一起部署。检索支持 **Cloudflare AI Search（当前默认）与 Vectorize（可回退）双引擎**，见第八节。
 
 ```
 docs/*.json ── scripts/ingest.mjs ──▶ POST /api/admin/ingest ──┬─▶ PostgreSQL (Hyperdrive)
@@ -23,9 +23,12 @@ PostgreSQL 聚合 ──▶ /api/admin/build-knowledge ──▶ Workers AI ─�
 | `src/schema.ts` | 迁移登记 + SQL 拆句；通过 Wrangler `Text` 模块直接导入 `sql/*.sql`，无第二份副本 |
 | `scripts/check-sql.mjs` | 校验新增 SQL 是否已登记（挂在 `typecheck` / `deploy` 前置钩子） |
 | `src/embeddings.ts` | Workers AI 向量化、Vectorize upsert / query |
+| `src/ai-search.ts` | AI Search 客户端：实例创建、文档同步、混合检索与降级判定 |
+| `src/ai-search-store.ts` | PG 商品/知识文档渲染为 AI Search 文档 + 同步状态读写 |
 | `src/knowledge.ts` | 类目 / 供应商 / 价格带 / 选购指南知识文档生成 |
 | `scripts/ingest.mjs` | 本地导入脚本：读 JSON、分批推送、断点、重试、构建知识库 |
-| `scripts/init-cloudflare.*` / `deploy-cloudflare.*` | Windows 一键初始化云资源 / 一键部署（`.cmd` 入口 + `.ps1` 实现） |
+| `scripts/sync-ai-search.mjs` | AI Search 文档同步脚本：分页、增量、断点、dry-run |
+| `scripts/init-cloudflare.cmd`、`scripts/init-cloudflare.ps1`、`scripts/deploy-cloudflare.cmd`、`scripts/deploy-cloudflare.ps1` | Windows 一键初始化云资源 / 一键部署（`.cmd` 入口 + `.ps1` 实现） |
 | `public/` | 登录、商品列表（每页 18 条）、商品详情、检索、对话、运维控制台 |
 
 ## 零、Windows 一键脚本（推荐）
@@ -198,13 +201,17 @@ npm run ingest -- --dry-run          # 只看数据量，不写任何东西
 | GET | `/api/products` | 登录 | 分页、关键词、类目、供应商、状态、价格、排序、仅推荐 |
 | GET | `/api/products/facets` | 登录 | 类目 / 供应商 / 状态 / 统计 |
 | GET | `/api/products/:skuCode` | 登录 | 单品详情 |
-| POST | `/api/search` | 登录 | `{query, mode: hybrid\|semantic\|keyword, topK, category, tenant}` |
-| POST | `/api/chat` | 登录 | `{sessionId?, message, topK?}` → 回答 + 带编号的商品卡片 |
+| POST | `/api/search` | 登录 | `{query, mode: hybrid\|semantic\|keyword, engine?, topK, category, tenant}` |
+| POST | `/api/chat` | 登录 | `{sessionId?, message, topK?, engine?}` → 回答 + 带编号的商品卡片 |
 | GET/DELETE | `/api/chat/sessions[/:id]` | 登录 | 会话列表 / 消息 / 删除 |
 | GET | `/api/admin/status` `/schema` | ADMIN_TOKEN | 状态 / 完整 DDL |
 | POST | `/api/admin/migrate` | ADMIN_TOKEN | 建表 + 写入管理员账号 |
 | POST | `/api/admin/ingest` | ADMIN_TOKEN | 商品批次导入（脚本使用） |
 | POST | `/api/admin/build-knowledge` | ADMIN_TOKEN | 分页构建知识库 |
+| GET | `/api/admin/ai-search/status` | ADMIN_TOKEN | AI Search 实例配置、索引进度、同步计数 |
+| POST | `/api/admin/ai-search/sync` | ADMIN_TOKEN | `{kind: kb\|sku, offset, limit, force}` 分页上传文档 |
+
+`engine` 可选 `ai_search`（当前服务端默认，`wrangler.jsonc` 的 `SEARCH_ENGINE`）或 `vectorize`；未显式传参时取该默认值。AI Search 分支返回的 `engine` 字段为 `ai_search`，失败自动降级时为 `vectorize (degraded)`。
 
 检索的 `hybrid` 模式用 **RRF（1/(60+rank)）** 融合关键词与语义结果，避免两类分数不可比；`semantic` 走 Vectorize metadata 过滤（默认只返回「已上架」）。
 
@@ -269,4 +276,81 @@ curl -H "X-Admin-Token: $ADMIN_TOKEN" https://ai.hesen.dpdns.org/api/admin/statu
 > 全局 `core.hooksPath` 已配置为 `C:/Users/Admin/.git-hooks`，其 `pre-commit` 会转发到仓库自己的 `.git/hooks/pre-commit`，所以 `npm run agent:hooks` 直接写仓库 hook 即可生效；若转发器变更，可执行 `git config --local core.hooksPath .githooks`。
 
 习惯数据与报告属于本地个人记录，已在 `.gitignore` 中忽略；`AGENTS.md`、`.workbuddy/quality/rules.json`、`.workbuddy/quality/baseline.json`、`.workbuddy/skills/` 与 `.githooks/pre-commit` 随仓库提交，保证换机器后规则与 Agent 定义可复现。
+
+## 八、AI Search 接入（当前默认引擎）
+
+Cloudflare AI Search（原 AutoRAG）是托管检索服务：自动切分、embedding、BM25 + 向量混合召回、重排与相似查询缓存。本项目已把 `SEARCH_ENGINE` 切到 `ai_search` 作为默认检索引擎；结构化查询仍由 PostgreSQL + Hyperdrive 承担，Vectorize 链路完整保留作为回退。
+
+| 继续自建 / 保留 | 交给 AI Search |
+| --- | --- |
+| PostgreSQL + Hyperdrive：登录、商品列表、筛选、facets、排序、会话、回表 | 文档切分、embedding、混合检索、reranking、缓存 |
+| Workers AI `llama-3.3-70b` 生成回答 | 索引与同步状态托管（embedding 不再计入 Workers AI neurons） |
+| Vectorize 索引与 `scripts/ingest.mjs`（回退引擎，随时可切回） | 知识库文档与商品文档的检索召回 |
+
+### 代码落点
+
+| 文件 | 作用 |
+| --- | --- |
+| `wrangler.jsonc` | `ai_search_namespaces` 绑定 + `AI_SEARCH_INSTANCE` / `SEARCH_ENGINE` |
+| `src/types.ts` | AI Search 绑定的最小类型定义与 `Env` 声明 |
+| `src/config.ts` | 实例名、批量、5 个 metadata 字段、引擎枚举 |
+| `src/ai-search-store.ts` | PG 文档渲染 + `ai_search_sync` 增量状态 |
+| `src/ai-search.ts` | 实例幂等创建、分页上传、`search()` 召回与 chunk 归类 |
+| `src/routes/search.ts` `src/routes/chat.ts` | `engine` 分支、回表组装、失败降级 |
+| `src/routes/admin.ts` | 同步与状态接口（沿用 `requireAdmin`） |
+| `sql/002_ai_search_sync.sql` | 同步状态表 DDL，已登记到 `src/schema.ts` |
+| `scripts/sync-ai-search.mjs` | 本地同步脚本，`npm run sync:ai-search` |
+
+### 前置条件
+
+- Wrangler ≥ 4.68.1、`compatibility_date` ≥ 2026-03-27、`@cloudflare/workers-types` ≥ 4.20260304.0；本项目当前 4.158.0 / 2026-11-09 / 5.20261109.1 均满足。
+- `wrangler.jsonc` 已配置 `ai_search_namespaces`（namespace `default` 由平台自动创建），实例 `product-catalog-search` 在**首次同步时自动创建**，无需手工建 R2 桶。
+- 若账号**从未创建过 AI Search 实例**，平台要求先注册 service API token：Worker 内自动创建会报 `AiSearchInternalError`，`wrangler ai-search create` 会报 `No AI Search API token found`。两种解法：① 在 Dashboard 的 `AI Search → Tokens` 注册 token 后用 CLI 创建；② 直接用账号凭据调 REST API `POST /accounts/{account_id}/ai-search/namespaces/default/instances`，body 为 `{"id":"product-catalog-search"}`（本次采用，无需 service token）。之后同步脚本会复用该实例并自动补齐 5 个 metadata 字段。
+- 本地调试用 `npx wrangler dev --remote`：AI Search 不在本地模拟，和 Workers AI 一样走云端。
+
+### 首次上线步骤（部署与同步属于外部动作，需明确要求后再执行）
+
+```bash
+# 1. 建同步状态表（DDL 幂等，重放安全）
+curl -X POST -H "X-Admin-Token: $ADMIN_TOKEN" $API_BASE/api/admin/migrate
+
+# 2. 先同步约 500 条知识文档（推荐第一步）
+ADMIN_TOKEN=xxx API_BASE=https://ai.hesen.dpdns.org npm run sync:ai-search -- --kind=kb
+
+# 3. 小批量验证商品文档，确认召回与费用
+npm run sync:ai-search -- --kind=sku --limit=200
+
+# 4. 全量同步（约 5985 条 SKU + 500 条知识文档）
+npm run sync:ai-search
+
+# 5. 查看索引进度 / 同步计数
+curl -H "X-Admin-Token: $ADMIN_TOKEN" $API_BASE/api/admin/ai-search/status
+```
+
+上传是**异步索引**，同步返回成功不等于立即可检索，等几分钟再验证。脚本参数：`--kind=kb|sku|all`、`--batch=40`、`--start`、`--limit`、`--force`（忽略 hash 强制重传）、`--dry-run`。中断后直接重跑即可，已同步且内容未变的文档会跳过。
+
+### 灰度与回退
+
+- 前端「商品检索」页的「检索引擎」开关即时生效，检索与对话共用这个选择；服务端默认值已在 `wrangler.jsonc` 的 `SEARCH_ENGINE` 设为 `ai_search`，前端开关可临时切回 Vectorize。
+- `GET /api/health` 返回 `bindings.aiSearch` 与 `search.engine`；`GET /api/admin/ai-search/status` 对应「运维」页的「AI Search 状态」按钮。
+- AI Search 抛错时 `src/routes/search.ts` 与 `src/routes/chat.ts` 自动回退到 Vectorize，响应 `engine` 标为 `vectorize (degraded)`，不影响线上可用性。
+- 回退只需把 `SEARCH_ENGINE` 改回 `vectorize` 并重新部署（前端开关可即时切回做验证），**不需要删代码或删索引**。
+
+### 实现约束
+
+- 自定义 metadata 上限 **5 个字段**，本项目用 `kind / category / tenant / status / price`，已用满；sku 编码不占字段，而是编码在 item key（`sku/<urlencoded>.md`、`kb/<urlencoded>.md`），检索后解析出来再回 PG 取完整商品信息。item key 的文件名有长度上限，中文 URI 编码会膨胀约 9 倍，因此超长 id（如供应商全称）自动退化为稳定短哈希 `kb/h<hash>.md`，原始来源仍写在文档正文的「关联键」中。
+- 字符串只有前 64 个 UTF-8 字节可过滤，改 metadata schema 会触发全量重索引。
+- 数据源不同步：PG 是权威源，商品改价或上下架后需重跑同步脚本，否则 AI Search 索引会滞后；检索侧用 `status` 过滤兜住下架商品。
+- 默认关闭 query rewriting（额外走 Workers AI 计费），开启 reranking 与 hybrid（`rrf` 融合）。
+
+### 费用（2026-11 核实，见官方 Limits & pricing）
+
+| 项目 | 每月免费 | 超出单价 |
+| --- | --- | --- |
+| ingestion tokens | 5M | $0.75 / 1M tokens |
+| 存储 | 10 GB-month | $2.00 / GB-month |
+| 语义 / 混合查询 | 1,000 次 | $0.75 / 1,000 次 |
+| 全文查询 | 1,000 次 | $0.10 / 1,000 次 |
+
+官方页面当前写 **2026-12-01 起计费**。Workers AI 的 embedding 与 reranking 用量包含在 AI Search 用量里，不进 Workers AI 账单；**答案生成仍走 Workers AI neurons**。本项目全量文本约 177 万 token，落在免费 ingestion 额度内，但 1,000 次/月的语义查询对导购站偏低，灰度时需观测实际查询量。
 

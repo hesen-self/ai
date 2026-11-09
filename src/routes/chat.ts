@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { currentUser, requireAuth } from '../auth';
 import { CHAT_MODEL, DEFAULT_TOP_K } from '../config';
+import { queryAiSearch, resolveEngine } from '../ai-search';
 import {
   addMessage,
   deleteSession,
@@ -31,9 +32,18 @@ function numberFromMatch(id: string): string {
   return id.replace(/^sku:/, '');
 }
 
+/** 两种检索引擎统一后的知识条目形状。 */
+interface KnowledgeRef {
+  title: string;
+  ref: string;
+  kind: string;
+  score: number;
+  text: string;
+}
+
 function buildContext(
   products: Record<string, unknown>[],
-  kbMatches: Awaited<ReturnType<typeof queryKbVectors>>,
+  kbRefs: KnowledgeRef[],
 ): string {
   const lines = products.map((p, i) => {
     const parts = [
@@ -48,11 +58,10 @@ function buildContext(
     return parts.filter(Boolean).join(' | ');
   });
 
-  const kb = kbMatches
-    .map((m) => {
-      const title = String(m.metadata?.title ?? '知识条目');
-      const ref = String(m.metadata?.ref ?? '');
-      return `- ${title}${ref ? `（${ref}）` : ''}：相似度 ${m.score.toFixed(3)}`;
+  const kb = kbRefs
+    .map((k) => {
+      const title = k.title || '知识条目';
+      return `- ${title}${k.ref ? `（${k.ref}）` : ''}：相似度 ${k.score.toFixed(3)}`;
     })
     .join('\n');
 
@@ -116,16 +125,60 @@ router.post('/', async (c) => {
   const recentUserQueries = history.filter((m) => m.role === 'user').slice(-2).map((m) => m.content);
   const retrievalQuery = clip([...recentUserQueries, message].join(' '), 180);
 
-  const [queryVector] = await embedTexts(c.env, [retrievalQuery]);
-  const [skuMatches, kbMatches] = await Promise.all([
-    querySkuVectors(c.env, queryVector, topK, { onlyOnSale: true }),
-    queryKbVectors(c.env, queryVector, 3),
-  ]);
+  const engine = resolveEngine(c.env, body.engine);
+  let activeEngine: string = engine;
+  let skuCodes: string[] = [];
+  let scoreBySku = new Map<string, number>();
+  let kbRefs: KnowledgeRef[] = [];
+  let usedAiSearch = false;
 
-  const skuCodes = skuMatches.map((m) => {
-    const meta = m.metadata?.sku;
-    return typeof meta === 'string' && meta ? meta : numberFromMatch(m.id);
-  });
+  // AI Search 是旁路：失败或绑定缺失时自动退回原有 Vectorize 链路。
+  if (engine === 'ai_search') {
+    try {
+      const result = await queryAiSearch(c.env, retrievalQuery, {
+        topK,
+        mode: 'hybrid',
+        onlyOnSale: true,
+        kbLimit: 3,
+      });
+      skuCodes = result.skuHits.map((hit) => hit.id);
+      scoreBySku = new Map(result.skuHits.map((hit) => [hit.id, hit.score]));
+      kbRefs = result.kbHits.map((hit) => ({
+        title: clip(hit.text.split('\n')[0].replace(/^#\s*/, '') || hit.id, 60),
+        // 超长 item key 会退化成短哈希，此时用文档正文的「关联键」还原可读来源。
+        ref: hit.text.match(/^关联键：(.+)$/m)?.[1]?.trim() || hit.id,
+        kind: 'kb',
+        score: hit.score,
+        text: hit.text,
+      }));
+      usedAiSearch = true;
+    } catch (error) {
+      console.warn('[ai-search] 对话检索失败，降级到 Vectorize：', error);
+      activeEngine = 'vectorize';
+    }
+  }
+
+  if (!usedAiSearch) {
+    // 原有链路：查询向量化 → SKU / 知识库双 namespace 召回。
+    const [queryVector] = await embedTexts(c.env, [retrievalQuery]);
+    const [skuMatches, kbMatches] = await Promise.all([
+      querySkuVectors(c.env, queryVector, topK, { onlyOnSale: true }),
+      queryKbVectors(c.env, queryVector, 3),
+    ]);
+    skuCodes = skuMatches.map((m) => {
+      const meta = m.metadata?.sku;
+      return typeof meta === 'string' && meta ? meta : numberFromMatch(m.id);
+    });
+    scoreBySku = new Map(skuMatches.map((m, i) => [skuCodes[i], m.score]));
+    kbRefs = kbMatches.map((m) => ({
+      title: String(m.metadata?.title ?? ''),
+      ref: String(m.metadata?.ref ?? ''),
+      kind: String(m.metadata?.kbKind ?? ''),
+      score: m.score,
+      text: '',
+    }));
+  }
+
   const productRows = await withSql(c.env, (sql) => getProductsBySkus(sql, skuCodes));
   const bySku = new Map(productRows.map((p) => [String(p.skuCode), p]));
   const ordered = skuCodes
@@ -140,10 +193,10 @@ router.post('/', async (c) => {
     category: String(p.category ?? ''),
     price: Number(p.price ?? 0),
     imageUrl: String(p.imageUrl ?? ''),
-    score: skuMatches[i]?.score ?? 0,
+    score: scoreBySku.get(String(p.skuCode)) ?? 0,
   }));
 
-  const context = buildContext(ordered, kbMatches);
+  const context = buildContext(ordered, kbRefs);
   const messages: ChatMessage[] = [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'system', content: context },
@@ -163,11 +216,12 @@ router.post('/', async (c) => {
     sessionId,
     reply,
     products: refs,
-    knowledge: kbMatches.map((m) => ({
-      title: String(m.metadata?.title ?? ''),
-      kind: String(m.metadata?.kbKind ?? ''),
-      score: m.score,
+    knowledge: kbRefs.map((k) => ({
+      title: k.title,
+      kind: k.kind,
+      score: k.score,
     })),
+    engine: activeEngine,
     degraded: !generated,
   });
 });

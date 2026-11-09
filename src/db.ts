@@ -4,7 +4,7 @@ import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from './config';
 import { SCHEMA_STATEMENTS } from './schema';
 import type { Env, KnowledgeDoc, Product } from './types';
 
-type SqlClient = ReturnType<typeof postgres>;
+export type SqlClient = ReturnType<typeof postgres>;
 
 /** 参数化查询小工具：动态拼接 WHERE 时自动生成 $1/$2... 占位符。 */
 class Params {

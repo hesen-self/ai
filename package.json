@@ -15,6 +15,7 @@
     "ingest": "node scripts/ingest.mjs",
     "ingest:migrate": "node scripts/ingest.mjs --migrate",
     "ingest:knowledge": "node scripts/ingest.mjs --knowledge-only",
+    "sync:ai-search": "node scripts/sync-ai-search.mjs",
     "agent": "node scripts/dev-agent.mjs",
     "agent:check": "node scripts/dev-agent.mjs check",
     "agent:guard": "node scripts/dev-agent.mjs guard",

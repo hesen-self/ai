@@ -31,3 +31,31 @@ export const METADATA_INDEXES = [
   { propertyName: 'tenant', type: 'string' },
   { propertyName: 'price', type: 'number' },
 ] as const;
+
+/* ---------------- AI Search（当前默认，Vectorize 回退） ---------------- */
+
+/** 默认 namespace 由 Cloudflare 自动创建；实例在首次同步时按需创建。 */
+export const AI_SEARCH_NAMESPACE = 'default';
+export const AI_SEARCH_INSTANCE = 'product-catalog-search';
+/** 单批同步的文档数，与 scripts/sync-ai-search.mjs 保持一致。 */
+export const AI_SEARCH_SYNC_BATCH = 40;
+/** Items API 单条上传约 2s，串行全量同步需数小时；限流并发以免触发平台限流。 */
+export const AI_SEARCH_UPLOAD_CONCURRENCY = 10;
+/** AI Search 单次 search() 的官方上限是 50 chunks；这里留出知识库条目的余量。 */
+export const AI_SEARCH_MAX_RESULTS = 50;
+export const AI_SEARCH_MATCH_THRESHOLD = 0.3;
+export const AI_SEARCH_RERANKER = '@cf/baai/bge-reranker-base';
+
+/** 自定义 metadata 上限 5 个字段；sku 编码不占字段，改用 item key 解析。 */
+export const AI_SEARCH_METADATA_FIELDS = [
+  { field_name: 'kind', data_type: 'text' },
+  { field_name: 'category', data_type: 'text' },
+  { field_name: 'tenant', data_type: 'text' },
+  { field_name: 'status', data_type: 'text' },
+  { field_name: 'price', data_type: 'number' },
+] as const;
+
+/** 兜底值：未配置 SEARCH_ENGINE 时保持原 Vectorize 链路；当前线上配置为 ai_search。 */
+export const DEFAULT_SEARCH_ENGINE = 'vectorize';
+export const SEARCH_ENGINES = ['vectorize', 'ai_search'] as const;
+export type SearchEngine = (typeof SEARCH_ENGINES)[number];

@@ -8,6 +8,7 @@ const state = {
   pageSize: 18,
   total: 0,
   searchMode: 'hybrid',
+  searchEngine: 'vectorize',
   sessionId: null,
   sending: false,
   currentSku: null,
@@ -487,6 +488,13 @@ $$('#search-modes .seg').forEach((button) => {
   });
 });
 
+$$('#search-engines .seg').forEach((button) => {
+  button.addEventListener('click', () => {
+    state.searchEngine = button.dataset.engine;
+    $$('#search-engines .seg').forEach((b) => b.classList.toggle('active', b === button));
+  });
+});
+
 $$('#search-examples .chip-btn').forEach((button) => {
   button.addEventListener('click', () => {
     $('#search-input').value = button.dataset.q;
@@ -508,11 +516,12 @@ async function doSearch() {
   try {
     const data = await api('/api/search', {
       method: 'POST',
-      body: JSON.stringify({ query, mode: state.searchMode, topK: 12 }),
+      body: JSON.stringify({ query, mode: state.searchMode, engine: state.searchEngine, topK: 12 }),
     });
     const label = { hybrid: '混合', semantic: '语义', keyword: '关键词' }[data.mode];
-    $('#search-summary').textContent =
-      `${label}检索「${query}」：命中 ${data.count} 件（关键词 ${data.keywordCount} / 语义 ${data.semanticCount}）`;
+    $('#search-summary').textContent = data.engine === 'ai_search'
+      ? `${label}检索（AI Search）「${query}」：命中 ${data.count} 件（chunks ${data.chunkCount ?? 0}）`
+      : `${label}检索「${query}」：命中 ${data.count} 件（关键词 ${data.keywordCount} / 语义 ${data.semanticCount}）${data.engine === 'vectorize' ? '' : '｜AI Search 不可用，已降级'}`;
     renderCards($('#search-results'), data.items, '没有检索到相关商品，换个说法试试');
   } catch (error) {
     $('#search-summary').textContent = '';
@@ -610,7 +619,7 @@ async function sendChat() {
   try {
     const data = await api('/api/chat', {
       method: 'POST',
-      body: JSON.stringify({ sessionId: state.sessionId, message }),
+      body: JSON.stringify({ sessionId: state.sessionId, message, engine: state.searchEngine }),
     });
     $('#chat-messages').lastElementChild?.remove();
     appendMessage('assistant', data.reply, data.products);
@@ -668,6 +677,19 @@ $('#admin-knowledge-btn').addEventListener('click', async () => {
   await adminAction('知识库构建（第 1 批）', '/api/admin/build-knowledge', { offset: 0, limit: 120 });
   toast('如需全量构建，请运行 npm run ingest:knowledge');
 });
+$('#admin-ai-status-btn').addEventListener('click', async () => {
+  try {
+    const result = await api('/api/admin/ai-search/status', { headers: adminHeaders() });
+    output(result.aiSearch ?? result);
+  } catch (error) {
+    output(`AI Search 状态读取失败：${error.message}`);
+  }
+});
+$('#admin-ai-sync-btn').addEventListener('click', () =>
+  adminAction('AI Search 知识库同步（第 1 批）', '/api/admin/ai-search/sync', {
+    kind: 'kb', offset: 0, limit: 40,
+  }),
+);
 $('#admin-schema-btn').addEventListener('click', async () => {
   try {
     const response = await fetch('/api/admin/schema', { headers: adminHeaders() });

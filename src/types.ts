@@ -38,11 +38,107 @@ export interface HyperdriveBinding {
   connectionString: string;
 }
 
+/* --------------------- AI Search 绑定的最小类型定义 --------------------- */
+/* 不依赖 workers-types 的联合类型；字段名与官方 Workers binding 文档一致。 */
+
+export interface AiSearchChunkItem {
+  key: string;
+  timestamp?: number;
+  metadata?: Record<string, string | number | boolean>;
+}
+
+export interface AiSearchChunk {
+  id: string;
+  type?: string;
+  score: number;
+  text?: string;
+  item?: AiSearchChunkItem;
+  instance_id?: string;
+  scoring_details?: {
+    vector_score?: number;
+    keyword_score?: number;
+    reranking_score?: number;
+    fusion_method?: string;
+  };
+}
+
+export interface AiSearchSearchResult {
+  query_kind?: string;
+  search_query?: string;
+  chunks?: AiSearchChunk[];
+  errors?: Array<{ instance_id?: string; message?: string }>;
+}
+
+export interface AiSearchRetrievalOptions {
+  retrieval_type?: 'vector' | 'keyword' | 'hybrid';
+  match_threshold?: number;
+  max_num_results?: number;
+  filters?: Record<string, unknown>;
+  fusion_method?: 'rrf' | 'max';
+  keyword_match_mode?: 'and' | 'or';
+}
+
+export interface AiSearchRequestOptions {
+  instance_ids?: string[];
+  retrieval?: AiSearchRetrievalOptions;
+  reranking?: { enabled?: boolean; model?: string; match_threshold?: number };
+  query_rewrite?: { enabled?: boolean };
+  cache?: { enabled?: boolean };
+}
+
+export interface AiSearchSearchRequest {
+  query?: string;
+  messages?: Array<{ role: string; content: string }>;
+  ai_search_options?: AiSearchRequestOptions;
+}
+
+export interface AiSearchItem {
+  id: string;
+  key: string;
+  status?: string;
+  chunks_count?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AiSearchItemsApi {
+  upload(
+    name: string,
+    content: string,
+    options?: { metadata?: Record<string, string> },
+  ): Promise<{ id: string; key: string }>;
+  list(options?: {
+    page?: number;
+    per_page?: number;
+    search?: string;
+  }): Promise<{ result: AiSearchItem[]; result_info: { total_count?: number } }>;
+  delete(itemId: string): Promise<void>;
+}
+
+export interface AiSearchInstanceHandle {
+  search(request: AiSearchSearchRequest): Promise<AiSearchSearchResult>;
+  info(): Promise<Record<string, unknown>>;
+  stats(): Promise<Record<string, unknown>>;
+  update(options: Record<string, unknown>): Promise<unknown>;
+  items: AiSearchItemsApi;
+}
+
+export interface AiSearchNamespaceBinding {
+  get(id: string): AiSearchInstanceHandle;
+  create(options: Record<string, unknown>): Promise<AiSearchInstanceHandle>;
+  list(options?: Record<string, unknown>): Promise<{
+    result: Array<{ id: string }>;
+    result_info?: { total_count?: number };
+  }>;
+  delete(id: string): Promise<void>;
+}
+
 export interface Env {
   AI: AiBinding;
   VECTORIZE: VectorizeBinding;
   HYPERDRIVE: HyperdriveBinding;
   ASSETS: Fetcher;
+  /** ai_search_namespaces 绑定；未配置时所有 AI Search 分支自动降级。 */
+  AI_SEARCH?: AiSearchNamespaceBinding;
   /** 通过 wrangler secret put 设置 */
   JWT_SECRET: string;
   ADMIN_TOKEN: string;
@@ -51,6 +147,8 @@ export interface Env {
   EMBEDDING_MODEL?: string;
   CHAT_MODEL?: string;
   VECTORIZE_INDEX_NAME?: string;
+  AI_SEARCH_INSTANCE?: string;
+  SEARCH_ENGINE?: string;
 }
 
 export interface AuthUser {

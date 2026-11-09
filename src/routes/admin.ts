@@ -1,7 +1,10 @@
 import { Hono } from 'hono';
 import { requireAdmin } from '../auth';
 import {
+  AI_SEARCH_INSTANCE,
+  AI_SEARCH_SYNC_BATCH,
   CHAT_MODEL,
+  DEFAULT_SEARCH_ENGINE,
   EMBED_BATCH,
   EMBEDDING_DIMENSIONS,
   EMBEDDING_METRIC,
@@ -21,6 +24,7 @@ import {
   withSql,
 } from '../db';
 import { embedTexts, upsertSkuVectors } from '../embeddings';
+import { aiSearchStatus, syncAiSearchBatch } from '../ai-search';
 import { buildKnowledgeBatch } from '../knowledge';
 import { normalizeBatch } from '../normalize';
 import { SCHEMA_SQL } from '../schema';
@@ -83,6 +87,9 @@ router.get('/status', async (c) => {
       metadataIndexes: METADATA_INDEXES,
       ingestBatch: INGEST_BATCH,
       embedBatch: EMBED_BATCH,
+      searchEngine: c.env.SEARCH_ENGINE || DEFAULT_SEARCH_ENGINE,
+      aiSearchBinding: Boolean(c.env.AI_SEARCH),
+      aiSearchInstance: c.env.AI_SEARCH_INSTANCE || AI_SEARCH_INSTANCE,
     },
     database,
   });
@@ -152,6 +159,26 @@ router.post('/build-knowledge', async (c) => {
   const limit = Math.min(200, Math.max(1, Number(body.limit) || 120));
   const force = body.force === true;
   const result = await buildKnowledgeBatch(c.env, offset, limit, force);
+  return c.json({ ok: true, ...result });
+});
+
+/** AI Search 实例状态：绑定、索引配置、索引进度与已同步文档数。 */
+router.get('/ai-search/status', async (c) =>
+  c.json({ ok: true, aiSearch: await aiSearchStatus(c.env) }),
+);
+
+/**
+ * 分页把 PG 的商品 / 知识文档上传到 AI Search 内置存储。
+ * 幂等依据 ai_search_sync 表的 content_hash；同名 item key 重复上传即覆盖。
+ * 上传是异步索引，返回成功不代表立即可检索。
+ */
+router.post('/ai-search/sync', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const kind = body.kind === 'sku' ? 'sku' : 'kb';
+  const offset = Math.max(0, Number(body.offset) || 0);
+  const limit = Math.min(80, Math.max(1, Number(body.limit) || AI_SEARCH_SYNC_BATCH));
+  const force = body.force === true;
+  const result = await syncAiSearchBatch(c.env, kind, offset, limit, force);
   return c.json({ ok: true, ...result });
 });
 

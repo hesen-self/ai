@@ -6,6 +6,7 @@
  * 这里只负责：登记迁移顺序、导出可逐条执行的语句、导出合并文本。
  */
 import initSql from '../sql/001_init.sql';
+import aiSearchSyncSql from '../sql/002_ai_search_sync.sql';
 import { splitStatements } from './sql-split';
 
 export interface Migration {
@@ -17,7 +18,10 @@ export interface Migration {
  * 迁移清单：新增 sql/NNN_*.sql 后，在此 import 并追加一项。
  * 顺序必须与文件名排序一致；scripts/check-sql.mjs 会校验目录与清单是否同步。
  */
-export const MIGRATIONS: Migration[] = [{ file: '001_init.sql', sql: initSql }];
+export const MIGRATIONS: Migration[] = [
+  { file: '001_init.sql', sql: initSql },
+  { file: '002_ai_search_sync.sql', sql: aiSearchSyncSql },
+];
 
 /** 供 /api/admin/migrate 逐条执行，保持与原实现相同的接口。 */
 export const SCHEMA_STATEMENTS: string[] = MIGRATIONS.flatMap((m) => splitStatements(m.sql));

@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
-import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, INDEX_NAME } from './config';
+import { AI_SEARCH_INSTANCE, EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, INDEX_NAME } from './config';
+import { resolveEngine } from './ai-search';
 import type { HonoEnv } from './types';
 
 import adminRoutes from './routes/admin';
@@ -25,11 +26,16 @@ app.get('/api/health', (c) =>
       vectorize: Boolean(c.env.VECTORIZE),
       hyperdrive: Boolean(c.env.HYPERDRIVE?.connectionString),
       assets: Boolean(c.env.ASSETS),
+      aiSearch: Boolean(c.env.AI_SEARCH),
     },
     index: {
       name: c.env.VECTORIZE_INDEX_NAME || INDEX_NAME,
       model: c.env.EMBEDDING_MODEL || EMBEDDING_MODEL,
       dimensions: EMBEDDING_DIMENSIONS,
+    },
+    search: {
+      engine: resolveEngine(c.env),
+      aiSearchInstance: c.env.AI_SEARCH_INSTANCE || AI_SEARCH_INSTANCE,
     },
     time: new Date().toISOString(),
   }),

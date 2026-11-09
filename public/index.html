@@ -100,13 +100,20 @@
             <button class="chip-btn" data-q="农业灌溉节水设备">农业灌溉节水设备</button>
           </div>
         </div>
+        <div class="row-between engine-row">
+          <span class="muted">检索引擎（灰度对比）</span>
+          <div class="segmented" id="search-engines">
+            <button class="seg active" data-engine="vectorize">Vectorize</button>
+            <button class="seg" data-engine="ai_search">AI Search</button>
+          </div>
+        </div>
         <p id="search-summary" class="muted"></p>
         <div id="search-results" class="product-grid"></div>
       </section>
 
       <!-- 对话推荐 -->
       <section id="view-chat" class="panel" hidden>
-        <div class="panel-head"><h2>对话推荐</h2><span class="muted">Vectorize 召回 + 知识库 + Workers AI 生成</span></div>
+        <div class="panel-head"><h2>对话推荐</h2><span class="muted">双引擎召回 + 知识库 + Workers AI 生成</span></div>
         <div class="chat-layout">
           <aside class="session-panel">
             <button class="btn primary block" id="new-session-btn">＋ 新建对话</button>
@@ -130,6 +137,8 @@
           <button class="btn ghost" id="admin-status-btn">刷新状态</button>
           <button class="btn ghost" id="admin-migrate-btn">执行迁移</button>
           <button class="btn ghost" id="admin-knowledge-btn">构建知识库</button>
+          <button class="btn ghost" id="admin-ai-status-btn">AI Search 状态</button>
+          <button class="btn ghost" id="admin-ai-sync-btn">同步知识库首批</button>
           <button class="btn ghost" id="admin-schema-btn">查看 DDL</button>
         </div>
         <p class="hint">数据初始化请使用本地脚本：<code>npm run ingest:migrate</code> → <code>npm run ingest</code>。Vectorize 写入为最终一致，导入后稍等片刻再检索。</p>

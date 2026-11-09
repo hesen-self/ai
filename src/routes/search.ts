@@ -1,6 +1,7 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { requireAuth } from '../auth';
 import { DEFAULT_TOP_K, MAX_TOP_K } from '../config';
+import { queryAiSearch, resolveEngine } from '../ai-search';
 import { getProductsBySkus, keywordSearch, withSql } from '../db';
 import { embedTexts, querySkuVectors } from '../embeddings';
 import type { HonoEnv, VectorizeMatch } from '../types';
@@ -54,6 +55,61 @@ function fuse(
   return [...map.values()].sort((a, b) => b.score - a.score).slice(0, topK);
 }
 
+interface SearchFilters {
+  category?: string;
+  tenant?: string;
+  onlyOnSale: boolean;
+}
+
+/**
+ * AI Search 分支：一次托管检索拿回商品与知识库 chunks，
+ * 再用 item key 里还原出的 sku 编码回 PG 取完整商品字段。
+ */
+async function runAiSearch(
+  c: Context<HonoEnv>,
+  query: string,
+  mode: Mode,
+  topK: number,
+  filters: SearchFilters,
+) {
+  const result = await queryAiSearch(c.env, query, {
+    topK,
+    mode,
+    category: filters.category,
+    tenant: filters.tenant,
+    onlyOnSale: filters.onlyOnSale,
+    kbLimit: 3,
+  });
+
+  const products = await withSql(c.env, (sql) =>
+    getProductsBySkus(sql, result.skuHits.map((hit) => hit.id)),
+  );
+  const bySku = new Map(products.map((p) => [String(p.skuCode), p]));
+  const items: Record<string, unknown>[] = [];
+  for (const hit of result.skuHits) {
+    const product = bySku.get(hit.id);
+    if (!product) continue;
+    items.push({
+      ...product,
+      score: Number(hit.score.toFixed(6)),
+      vectorScore: hit.vectorScore,
+      keywordScore: hit.keywordScore,
+      sources: ['ai_search'],
+    });
+  }
+
+  return c.json({
+    mode,
+    query,
+    engine: 'ai_search',
+    count: items.length,
+    chunkCount: result.rawCount,
+    knowledgeCount: result.kbHits.length,
+    searchQuery: result.searchQuery,
+    items,
+  });
+}
+
 router.post('/', async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const query = String(body.query ?? '').trim();
@@ -62,11 +118,23 @@ router.post('/', async (c) => {
 
   const mode: Mode = ['keyword', 'semantic', 'hybrid'].includes(body.mode) ? body.mode : 'hybrid';
   const topK = Math.min(MAX_TOP_K, Math.max(1, Number(body.topK) || DEFAULT_TOP_K));
+  const engine = resolveEngine(c.env, body.engine);
+  let activeEngine: string = engine;
   const filters = {
     category: body.category ? String(body.category) : undefined,
     tenant: body.tenant ? String(body.tenant) : undefined,
     onlyOnSale: body.onlyOnSale !== false,
   };
+
+  // 托管检索是旁路：任何异常都退回原有 Vectorize 链路，保证检索可用。
+  if (engine === 'ai_search') {
+    try {
+      return await runAiSearch(c, query, mode, topK, filters);
+    } catch (error) {
+      console.warn('[ai-search] 检索失败，降级到 Vectorize：', error);
+      activeEngine = 'vectorize (degraded)';
+    }
+  }
 
   let keywordRows: Record<string, unknown>[] = [];
   let vectorMatches: VectorizeMatch[] = [];
@@ -134,6 +202,7 @@ router.post('/', async (c) => {
   return c.json({
     mode,
     query,
+    engine: activeEngine,
     count: items.length,
     keywordCount: keywordRows.length,
     semanticCount: vectorMatches.length,
