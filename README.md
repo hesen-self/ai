@@ -42,7 +42,7 @@ PostgreSQL 聚合 ──▶ /api/admin/build-knowledge ──▶ Workers AI ─�
 # ② 一键部署：前置检查 → typecheck + SQL 登记校验 → deploy → 健康检查
 .\scripts\deploy-cloudflare.cmd
 
-# ③ 首次上线再加数据（DDL + 5985 条 SKU 向量化 + 知识库，Workers AI 计费）
+# ③ 首次上线再加数据（DDL + 5985 条 SKU 向量化 + 知识库，消耗 Workers AI neurons 配额）
 .\scripts\deploy-cloudflare.cmd -WithIngest
 ```
 
@@ -56,7 +56,7 @@ PostgreSQL 聚合 ──▶ /api/admin/build-knowledge ──▶ Workers AI ─�
 | `-ForceSecrets` | init | 覆盖已存在的 secrets（默认跳过） |
 | `-SkipVectorize` `-SkipHyperdrive` `-SkipSecrets` | init | 分段执行 |
 | `-WhatIf` | 两者 | 只打印将执行的命令，不联网不写文件 |
-| `-WithIngest` | deploy | 部署后执行迁移 + 全量导入 + 知识库（计费） |
+| `-WithIngest` | deploy | 部署后执行迁移 + 全量导入 + 知识库（消耗 neurons 配额） |
 | `-ApiBase` | deploy | 健康检查 / 导入地址，默认 `https://ai.hesen.dpdns.org` |
 | `-SkipHealthCheck` | deploy | 跳过健康检查 |
 
@@ -146,7 +146,7 @@ npm run typecheck
 npm run deploy
 ```
 
-这次部署会同时把 Worker 挂到自定义域名上。本地调试用 `npm run dev`。注意 **Workers AI 的绑定始终走云端并计费**，`wrangler dev` 也不例外；Vectorize、Hyperdrive 同样需要真实资源。
+这次部署会同时把 Worker 挂到自定义域名上。本地调试用 `npm run dev`。注意 **Workers AI 绑定始终走云端并消耗 neurons 配额**，`wrangler dev` 也不例外；Vectorize、Hyperdrive 同样需要真实资源。
 
 ## 二、初始化数据
 
@@ -173,6 +173,20 @@ npm run ingest -- --dry-run          # 只看数据量，不写任何东西
 幂等靠 `content_hash + synced_at`：内容未变且已同步的记录会跳过；中断后重跑同一命令即可，不会重复消耗 embedding 额度。Vectorize 写入是**最终一致**的，导入完成后等几秒再做检索验证。
 
 知识库按 `类目 / 供应商 / 价格带 / 选购指南` 从 PG 实时聚合生成，约 500 条文档，分页构建（每批 120 条）以避免单次 Worker 请求里串行太多 AI 调用。
+
+### 额度与费用（2026-11 核实）
+
+| 资源 | 免费额度 | 本项目实测 |
+| --- | --- | --- |
+| Workers AI | 10,000 neurons / 天（00:00 UTC 重置） | 全量导入约 2,200 neurons，≈22% |
+| `@cf/baai/bge-m3` embedding | 1,075 neurons / 百万输入 token | 5985 条共 118 万字符 ≈ 177 万 token ≈ 1,905 neurons |
+| Vectorize | 30M queried dims / 月、5M stored dims（Free） | 6448 条 × 1024 维 ≈ 6.6M stored dims |
+| Workers 请求 / Hyperdrive 查询 | 各 100,000 / 天 | 150 批导入，远低于上限 |
+
+- **免费计划超额只会让请求失败，不会产生账单**。需超量才升级 Workers Paid（$5/月起，超出每日 10,000 neurons 后按 `$0.011 / 1,000 neurons` 计）。
+- 本项目 6448 条向量已全部写入成功；若账号为 Workers Free，5M stored dimensions 可能在约 4880 条处拦截写入，届时需确认套餐。
+- 真正的 neurons 大户是**对话生成**：`@cf/meta/llama-3.3-70b-instruct-fp8-fast` 输出 204,805 neurons / 百万 token，约为 embedding 单价的 190 倍。对话量大时可在 `src/config.ts` 换用小模型（如 `@cf/meta/llama-3.2-1b-instruct`，18,252 neurons / 百万输出 token）。
+- 模型目录会调整，价格与「需绑定付费方式」的模型清单以 [Workers AI Pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/) 为准。
 
 ## 三、API
 

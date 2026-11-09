@@ -27,7 +27,14 @@ export function createSql(env: Env): SqlClient {
   });
 }
 
-/** 每个请求独立创建 client（Hyperdrive 负责底层连接池），用完释放。 */
+/**
+ * 每个请求独立创建 client（Hyperdrive 负责底层连接池），用完释放。
+ *
+ * 注意：JSON 参数统一写成 `$N::text::jsonb`，值传 JSON.stringify 后的字符串。
+ * 若直接写 `$N::jsonb`，PG 会把参数类型推断为 jsonb OID(3802)，postgres.js 随之
+ * 自动再 JSON.stringify 一次，字符串被二次编码成 JSON 字符串，导致
+ * jsonb_to_recordset 报 "cannot call on a non-array"。
+ */
 export async function withSql<T>(env: Env, fn: (sql: SqlClient) => Promise<T>): Promise<T> {
   const sql = createSql(env);
   try {
@@ -203,7 +210,7 @@ export async function upsertProducts(sql: SqlClient, products: Product[]): Promi
     .map((c) => `${c} = excluded.${c}`)
     .join(', ');
   const statement = `insert into products (${cols.join(', ')})
-    select ${cols.join(', ')} from jsonb_to_recordset($1::jsonb) as x(${typeDefs})
+    select ${cols.join(', ')} from jsonb_to_recordset($1::text::jsonb) as x(${typeDefs})
     on conflict (sku_code) do update set ${updates}, updated_at = now()`;
   await sql.unsafe(statement, [JSON.stringify(rows)]);
   return rows.length;
@@ -216,7 +223,7 @@ export async function getProductHashes(
   if (!skuCodes.length) return new Map();
   const rows = await sql.unsafe(
     `select sku_code, content_hash, synced_at from products
-     where sku_code in (select value::text from jsonb_array_elements_text($1::jsonb))`,
+     where sku_code in (select value::text from jsonb_array_elements_text($1::text::jsonb))`,
     [JSON.stringify(skuCodes)],
   );
   return new Map(
@@ -231,7 +238,7 @@ export async function markProductsSynced(sql: SqlClient, skuCodes: string[]): Pr
   if (!skuCodes.length) return;
   await sql.unsafe(
     `update products set synced_at = now()
-     where sku_code in (select value::text from jsonb_array_elements_text($1::jsonb))`,
+     where sku_code in (select value::text from jsonb_array_elements_text($1::text::jsonb))`,
     [JSON.stringify(skuCodes)],
   );
 }
@@ -297,7 +304,7 @@ export async function getProductsBySkus(
   if (!skuCodes.length) return [];
   const rows = await sql.unsafe(
     `select ${PUBLIC_COLS} from products
-     where sku_code in (select value::text from jsonb_array_elements_text($1::jsonb))`,
+     where sku_code in (select value::text from jsonb_array_elements_text($1::text::jsonb))`,
     [JSON.stringify(skuCodes)],
   );
   return (rows as Record<string, any>[]).map(mapProductRow);
@@ -375,7 +382,7 @@ export async function upsertKnowledgeDocs(sql: SqlClient, docs: KnowledgeDoc[]):
   await sql.unsafe(
     `insert into knowledge_docs (id, kind, ref_key, title, content, meta, content_hash, vector_id)
      select id, kind, ref_key, title, content, meta, content_hash, vector_id
-     from jsonb_to_recordset($1::jsonb) as x(
+     from jsonb_to_recordset($1::text::jsonb) as x(
        id text, kind text, ref_key text, title text, content text,
        meta jsonb, content_hash text, vector_id text)
      on conflict (id) do update set kind = excluded.kind, title = excluded.title,
@@ -393,7 +400,7 @@ export async function getKnowledgeHashes(
   if (!ids.length) return new Map();
   const rows = await sql.unsafe(
     `select id, content_hash, synced_at from knowledge_docs
-     where id in (select value::text from jsonb_array_elements_text($1::jsonb))`,
+     where id in (select value::text from jsonb_array_elements_text($1::text::jsonb))`,
     [JSON.stringify(ids)],
   );
   return new Map(
@@ -408,7 +415,7 @@ export async function markKnowledgeSynced(sql: SqlClient, ids: string[]): Promis
   if (!ids.length) return;
   await sql.unsafe(
     `update knowledge_docs set synced_at = now()
-     where id in (select value::text from jsonb_array_elements_text($1::jsonb))`,
+     where id in (select value::text from jsonb_array_elements_text($1::text::jsonb))`,
     [JSON.stringify(ids)],
   );
 }
@@ -525,7 +532,7 @@ export async function addMessage(
 ): Promise<void> {
   await sql.unsafe(
     `insert into chat_messages (session_id, role, content, products)
-     values ($1::uuid, $2, $3, $4::jsonb)`,
+     values ($1::uuid, $2, $3, $4::text::jsonb)`,
     [sessionId, role, content, JSON.stringify(products)],
   );
   await sql.unsafe(`update chat_sessions set updated_at = now() where id = $1::uuid`, [sessionId]);

@@ -110,9 +110,18 @@ async function buildKnowledge() {
 
 async function main() {
   console.log(`目标服务：${API_BASE}`);
-  const status = await request('/api/admin/status');
-  console.log(`绑定状态：${status.ok ? '正常' : '异常'}｜模型 ${status.config.embeddingModel}｜索引 ${status.config.indexName}`);
-  console.log(`当前数据库：${status.database.stats?.total ?? 0} 个 SKU，${status.database.knowledge_docs ?? 0} 条知识文档`);
+  let status;
+  try {
+    status = await request('/api/admin/status');
+  } catch (error) {
+    // 旧版 Worker 在表未建时 /status 会返回 500；带 --migrate 时应继续往下走。
+    if (!MIGRATE) throw error;
+    console.warn(`⚠ 状态查询失败，将尝试先迁移：${error.message}`);
+    status = { config: {}, database: { stats: {} } };
+  }
+  if (status.migrated === false) console.log('数据库尚未迁移（表不存在），后续将执行 DDL。');
+  console.log(`绑定状态：${status.ok !== false ? '正常' : '异常'}｜模型 ${status.config?.embeddingModel ?? '默认'}｜索引 ${status.config?.indexName ?? '默认'}`);
+  console.log(`当前数据库：${status.database?.stats?.total ?? 0} 个 SKU，${status.database?.knowledge_docs ?? 0} 条知识文档`);
 
   if (MIGRATE) {
     console.log('\n[1/3] 执行数据库迁移…');

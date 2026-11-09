@@ -30,20 +30,49 @@ const router = new Hono<HonoEnv>();
 
 router.use('*', requireAdmin);
 
+/** PostgreSQL 42P01：表尚未创建。首次部署时这是正常状态，不应让 /status 返回 500。 */
+function isMissingRelation(error: unknown): boolean {
+  const detail = error as { code?: string; message?: string } | null;
+  return detail?.code === '42P01' || /relation .* does not exist/i.test(detail?.message ?? '');
+}
+
 router.get('/status', async (c) => {
-  const facets = await withSql(c.env, (sql) => getFacets(sql));
-  const extra = await withSql(c.env, (sql) =>
-    sql.unsafe(
-      `select
+  let database: Record<string, unknown> = {};
+  let migrated = true;
+  try {
+    const facets = await withSql(c.env, (sql) => getFacets(sql));
+    const extra = await withSql(c.env, (sql) =>
+      sql.unsafe(
+        `select
         (select count(*)::int from products where synced_at is null) as unsynced_products,
         (select count(*)::int from knowledge_docs) as knowledge_docs,
         (select count(*)::int from knowledge_docs where synced_at is null) as unsynced_knowledge,
         (select count(*)::int from app_users) as users,
         (select count(*)::int from chat_messages) as messages`,
-    ),
-  );
+      ),
+    );
+    database = {
+      ...(facets as Record<string, unknown>),
+      ...((extra[0] as Record<string, unknown>) ?? {}),
+    };
+  } catch (error) {
+    if (!isMissingRelation(error)) throw error;
+    migrated = false;
+    database = {
+      categories: [],
+      tenants: [],
+      statuses: [],
+      stats: {},
+      unsynced_products: 0,
+      knowledge_docs: 0,
+      unsynced_knowledge: 0,
+      users: 0,
+      messages: 0,
+    };
+  }
   return c.json({
     ok: true,
+    migrated,
     config: {
       embeddingModel: c.env.EMBEDDING_MODEL || EMBEDDING_MODEL,
       dimensions: EMBEDDING_DIMENSIONS,
@@ -55,10 +84,7 @@ router.get('/status', async (c) => {
       ingestBatch: INGEST_BATCH,
       embedBatch: EMBED_BATCH,
     },
-    database: {
-      ...(facets as Record<string, unknown>),
-      ...((extra[0] as Record<string, unknown>) ?? {}),
-    },
+    database,
   });
 });
 
