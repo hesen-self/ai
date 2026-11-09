@@ -19,6 +19,8 @@ export const EMBED_BATCH = 40;
 export const INGEST_BATCH = 40;
 export const DEFAULT_TOP_K = 8;
 export const MAX_TOP_K = 20;
+/** 商品列表每页条数；API 默认值、DB 兜底值与前端保持一致。 */
+export const DEFAULT_PAGE_SIZE = 18;
 export const MAX_PAGE_SIZE = 60;
 
 /** metadata 索引字段（必须在使用 wrangler 创建索引后、写入向量之前建立）。 */

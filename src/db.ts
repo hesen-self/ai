@@ -1,5 +1,6 @@
 import postgres from 'postgres';
 import { hashPassword } from './auth';
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from './config';
 import { SCHEMA_STATEMENTS } from './schema';
 import type { Env, KnowledgeDoc, Product } from './types';
 
@@ -263,7 +264,7 @@ export async function listProducts(
   options: ListOptions,
 ): Promise<{ items: Record<string, unknown>[]; total: number; page: number; pageSize: number }> {
   const page = Math.max(1, Math.floor(options.page ?? 1));
-  const pageSize = Math.min(60, Math.max(1, Math.floor(options.pageSize ?? 20)));
+  const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(options.pageSize ?? DEFAULT_PAGE_SIZE)));
   const p = new Params();
   const where = ['1 = 1'];
 

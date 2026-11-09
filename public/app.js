@@ -5,11 +5,12 @@ const state = {
   user: null,
   view: 'products',
   page: 1,
-  pageSize: 20,
+  pageSize: 18,
   total: 0,
   searchMode: 'hybrid',
   sessionId: null,
   sending: false,
+  currentSku: null,
   adminToken: sessionStorage.getItem('cf_admin_token') || '',
 };
 
@@ -22,6 +23,22 @@ const esc = (value) =>
     .replace(/'/g, '&#39;');
 
 const money = (value) => `¥${Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`;
+const listOf = (value) => (Array.isArray(value) ? value : []);
+const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+const cell = (value) => esc(value === null || value === undefined || value === '' ? '—' : String(value));
+const safeUrl = (value) => {
+  const url = String(value ?? '').trim();
+  return /^https?:\/\//i.test(url) ? url : '';
+};
+const scalar = (value) => {
+  if (value === null || value === undefined || value === '') return '—';
+  if (isObject(value) || Array.isArray(value)) return JSON.stringify(value);
+  return String(value);
+};
+const describe = (value) =>
+  isObject(value)
+    ? Object.entries(value).map(([k, v]) => `${esc(k)}：${esc(scalar(v))}`).join('　')
+    : esc(scalar(value));
 
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
@@ -65,7 +82,7 @@ function productCard(p) {
   const scoreBadge = p.score !== undefined
     ? `<span class="badge score">相关度 ${Number(p.score).toFixed(3)}</span>`
     : '';
-  return `<article class="product-card">
+  return `<article class="product-card" data-sku="${esc(p.skuCode)}" role="link" tabindex="0" title="点击查看商品详情">
     <div class="product-thumb">${thumb}</div>
     <div class="product-body">
       <div class="product-title" title="${esc(p.name)}">${esc(p.name)}</div>
@@ -104,6 +121,8 @@ function enterApp(user) {
   $('#user-chip').textContent = `${user.displayName || user.email}${user.role === 'admin' ? ' · 管理员' : ''}`;
   loadFacets();
   loadProducts();
+  // 支持带 #/product/<SKU> 的链接：未登录时先登录，登录完成后再进入详情。
+  applyHash();
 }
 
 let authMode = 'login';
@@ -146,14 +165,60 @@ $('#logout-btn').addEventListener('click', async () => {
 /* -------------------------------- 视图切换 ------------------------------- */
 
 function switchView(view) {
+  // 离开详情页时静默清掉 hash，避免刷新后又跳回商品详情。
+  if (view !== 'product' && location.hash.startsWith('#/product/')) {
+    history.replaceState(null, '', location.pathname + location.search);
+  }
   state.view = view;
-  $$('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+  const navView = view === 'product' ? 'products' : view;
+  $$('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === navView));
   $$('main > .panel').forEach((panel) => (panel.hidden = panel.id !== `view-${view}`));
   if (view === 'chat') loadSessions();
   if (view === 'admin') $('#admin-token').value = state.adminToken;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 $$('.nav-item').forEach((button) => button.addEventListener('click', () => switchView(button.dataset.view)));
+
+/* ------------------------------ 商品详情路由 ------------------------------ */
+
+function skuFromHash() {
+  const match = location.hash.match(/^#\/product\/(.+)$/);
+  if (!match) return null;
+  try { return decodeURIComponent(match[1]); } catch { return null; }
+}
+
+function openProduct(skuCode) {
+  if (!skuCode) return;
+  const target = `#/product/${encodeURIComponent(skuCode)}`;
+  if (location.hash === target) showProduct(skuCode);
+  else location.hash = target; // 由 hashchange 统一触发导航，避免重复请求
+}
+
+function showProduct(skuCode) {
+  if (!state.user) return;
+  switchView('product');
+  loadProductDetail(skuCode);
+}
+
+function applyHash() {
+  const sku = skuFromHash();
+  if (sku) showProduct(sku);
+  else if (state.view === 'product') switchView('products');
+}
+
+window.addEventListener('hashchange', applyHash);
+
+// 商品卡片 / 聊天卡片统一事件委托：点击与回车都进入详情。
+document.addEventListener('click', (event) => {
+  const card = event.target.closest?.('[data-sku]');
+  if (card?.dataset.sku) openProduct(card.dataset.sku);
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') return;
+  const card = event.target.closest?.('.product-card[data-sku], .mini-card[data-sku]');
+  if (card?.dataset.sku) openProduct(card.dataset.sku);
+});
 
 /* -------------------------------- 商品列表 ------------------------------- */
 
@@ -240,6 +305,179 @@ $('#page-next').addEventListener('click', () => {
   if (state.page * state.pageSize < state.total) { state.page += 1; loadProducts(); }
 });
 
+/* -------------------------------- 商品详情 ------------------------------- */
+
+function galleryOf(product) {
+  const usable = (url) =>
+    typeof url === 'string' && /^(https?:\/\/|\/)/i.test(url.trim()) && !/^javascript:/i.test(url.trim());
+  return [...new Set([product.coverUrl, product.imageUrl, ...listOf(product.gallery)])]
+    .filter(usable)
+    .slice(0, 8);
+}
+
+function bindMainImage(wrap) {
+  const img = wrap.querySelector('#detail-main-img');
+  if (!img) return;
+  img.addEventListener('error', () => {
+    const placeholder = document.createElement('span');
+    placeholder.className = 'detail-placeholder';
+    placeholder.textContent = '▧';
+    img.replaceWith(placeholder);
+  });
+}
+
+function renderDetail(p) {
+  const gallery = galleryOf(p);
+  const main = gallery.length
+    ? `<img id="detail-main-img" src="${esc(gallery[0])}" alt="${esc(p.name)}" />`
+    : '<span class="detail-placeholder">▧</span>';
+  const thumbs = gallery.length > 1
+    ? `<div class="detail-thumbs">${gallery
+        .map((url, i) => `<button class="detail-thumb ${i === 0 ? 'active' : ''}" data-src="${esc(url)}" title="商品图 ${i + 1}"><img src="${esc(url)}" alt="商品图 ${i + 1}" loading="lazy" /></button>`)
+        .join('')}</div>`
+    : '';
+
+  const badges = [
+    `<span class="badge cat">${cell(p.category)}</span>`,
+    `<span class="badge ${p.status === '已上架' ? 'on' : ''}">${cell(p.status)}</span>`,
+    p.recommended ? '<span class="badge">平台推荐</span>' : '',
+    p.afterSales ? '<span class="badge">支持售后</span>' : '',
+  ].join('');
+
+  const facts = [
+    ['SKU 编码', p.skuCode],
+    ['SPU 编码', p.spuCode],
+    ['商品类目', p.category],
+    ['供应商', p.tenant],
+    ['业务类型', p.bizType],
+    ['定价方式', p.pricingType],
+    ['计价单位', p.unit],
+    ['标价', p.listPrice == null ? null : money(p.listPrice)],
+    ['价格区间', p.priceRange],
+    ['起订量', p.minOrder],
+    ['库存', p.stock],
+    ['SPU 库存', p.spuStock],
+    ['销量 / 浏览', `${Number(p.sales || 0)} / ${Number(p.views || 0)}`],
+    ['评价数', p.reviews],
+    ['重量 / 体积', `${p.weightKg ?? '—'} kg / ${p.volumeM3 ?? '—'} m³`],
+    ['上架状态', p.status],
+  ];
+  const factsHtml = facts
+    .map(([label, value]) => `<div class="fact"><span>${esc(label)}</span><strong>${cell(value)}</strong></div>`)
+    .join('');
+
+  const tiers = listOf(p.tierPrices);
+  const tiersHtml = tiers.length
+    ? `<ul class="detail-list">${tiers.map((t) => `<li>${describe(t)}</li>`).join('')}</ul>`
+    : '<p class="muted">暂无阶梯价信息</p>';
+
+  const logisticsHtml = isObject(p.logistics)
+    ? `<ul class="detail-list">${Object.entries(p.logistics)
+        .map(([k, v]) => `<li>${esc(k)}：${esc(scalar(v))}</li>`)
+        .join('')}</ul>`
+    : `<p class="muted">${cell(p.logistics)}</p>`;
+  const deliveries = listOf(p.delivery);
+  const deliveryHtml = deliveries.length
+    ? `<ul class="detail-list">${deliveries.map((d) => `<li>${describe(d)}</li>`).join('')}</ul>`
+    : '<p class="muted">暂无配送信息</p>';
+  const video = safeUrl(p.videoUrl);
+  const videoHtml = video
+    ? `<section class="detail-section"><h3>商品视频</h3><a class="detail-link" href="${esc(video)}" target="_blank" rel="noopener noreferrer">${esc(video)} ↗</a></section>`
+    : '';
+
+  const wrap = $('#product-detail');
+  wrap.innerHTML = `<div class="detail-hero">
+      <div class="detail-gallery">
+        <div class="detail-main">${main}</div>
+        ${thumbs}
+      </div>
+      <div class="detail-info">
+        <div class="badges">${badges}</div>
+        <h2 class="detail-title">${cell(p.name)}</h2>
+        <div class="detail-price">${money(p.price)} <span class="muted">/ ${cell(p.unit || '件')}</span></div>
+        <div class="detail-actions">
+          <button class="btn primary" data-detail-action="chat">向 AI 咨询这款商品</button>
+          <button class="btn" data-detail-action="search">找同类商品</button>
+          <button class="btn ghost" data-detail-action="copy">复制 SKU</button>
+        </div>
+        <div class="detail-facts">${factsHtml}</div>
+      </div>
+    </div>
+    <section class="detail-section"><h3>规格与简介</h3>
+      <p class="detail-text"><strong>销售规格：</strong>${cell(p.spec)}</p>
+      <p class="detail-text"><strong>商品简介：</strong>${cell(p.intro)}</p>
+    </section>
+    <section class="detail-section"><h3>阶梯价格</h3>${tiersHtml}</section>
+    <section class="detail-section"><h3>物流与配送</h3>
+      <h4>物流信息</h4>${logisticsHtml}<h4>配送说明</h4>${deliveryHtml}
+    </section>
+    ${videoHtml}`;
+
+  bindMainImage(wrap);
+  wrap.querySelectorAll('.detail-thumb').forEach((button) => {
+    button.addEventListener('click', () => {
+      wrap.querySelectorAll('.detail-thumb').forEach((b) => b.classList.toggle('active', b === button));
+      wrap.querySelector('.detail-main').innerHTML =
+        `<img id="detail-main-img" src="${esc(button.dataset.src)}" alt="商品图" />`;
+      bindMainImage(wrap);
+    });
+  });
+  wrap.querySelectorAll('[data-detail-action]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const action = button.dataset.detailAction;
+      if (action === 'copy') {
+        try {
+          await navigator.clipboard.writeText(String(p.skuCode || ''));
+          toast('SKU 已复制');
+        } catch {
+          toast(`SKU：${p.skuCode}`);
+        }
+      } else if (action === 'search') {
+        switchView('search');
+        $('#search-input').value = String(p.category || p.name || '');
+        doSearch();
+      } else if (action === 'chat') {
+        switchView('chat');
+        $('#chat-input').value = `请介绍 SKU ${p.skuCode}（${p.name}），并给出采购建议。`;
+        $('#chat-input').focus();
+      }
+    });
+  });
+}
+
+async function loadProductDetail(skuCode) {
+  state.currentSku = skuCode;
+  $('#product-crumb').textContent = `SKU ${skuCode}`;
+  $('#product-detail').innerHTML = '<div class="empty">正在加载商品…</div>';
+  $('#product-related').innerHTML = '';
+  try {
+    const { product } = await api(`/api/products/${encodeURIComponent(skuCode)}`);
+    renderDetail(product);
+    loadRelated(product);
+  } catch (error) {
+    $('#product-detail').innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+  }
+}
+
+async function loadRelated(product) {
+  const params = new URLSearchParams({ page: '1', pageSize: '6', sort: 'popular', status: '已上架' });
+  if (product.category) params.set('category', String(product.category));
+  try {
+    const data = await api(`/api/products?${params}`);
+    const items = (data.items || [])
+      .filter((item) => String(item.skuCode) !== String(product.skuCode))
+      .slice(0, 4);
+    renderCards($('#product-related'), items, '暂无同类商品');
+  } catch {
+    renderCards($('#product-related'), [], '相关商品加载失败');
+  }
+}
+
+$('#product-back').addEventListener('click', () => {
+  history.replaceState(null, '', location.pathname + location.search);
+  switchView('products');
+});
+
 /* -------------------------------- 商品检索 ------------------------------- */
 
 $$('#search-modes .seg').forEach((button) => {
@@ -291,17 +529,27 @@ function appendMessage(role, content, products = []) {
   const el = document.createElement('div');
   el.className = `msg ${role}`;
   el.textContent = content;
-  if (Array.isArray(products) && products.length) {
+  const all = Array.isArray(products) ? products : [];
+  if (all.length) {
+    // 对话回复可能引用 [1]~[6]，卡片只展示前三条，避免长列表挤占聊天区。
+    const shown = all.slice(0, 3);
     const box = document.createElement('div');
     box.className = 'msg-products';
-    box.innerHTML = products
-      .map((p) => `<div class="mini-card">
-        <div class="mini-name">[${esc(p.index)}] ${esc(p.name)}</div>
+    box.innerHTML = shown
+      .map((p) => `<div class="mini-card" data-sku="${esc(p.skuCode)}" role="link" tabindex="0" title="点击查看商品详情">
+        <div class="mini-name">${p.index ? `[${esc(p.index)}] ` : ''}${esc(p.name)}</div>
         <div class="mini-price">${money(p.price)}</div>
         <div class="muted">${esc(p.category || '未分类')}</div>
+        <div class="mini-link">查看详情 →</div>
       </div>`)
       .join('');
     el.appendChild(box);
+    if (all.length > shown.length) {
+      const more = document.createElement('div');
+      more.className = 'msg-products-more muted';
+      more.textContent = `仅展示前 ${shown.length} 件推荐商品，其余 ${all.length - shown.length} 件可在商品检索中查看。`;
+      el.appendChild(more);
+    }
   }
   container.appendChild(el);
   container.scrollTop = container.scrollHeight;

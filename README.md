@@ -26,7 +26,7 @@ PostgreSQL 聚合 ──▶ /api/admin/build-knowledge ──▶ Workers AI ─�
 | `src/knowledge.ts` | 类目 / 供应商 / 价格带 / 选购指南知识文档生成 |
 | `scripts/ingest.mjs` | 本地导入脚本：读 JSON、分批推送、断点、重试、构建知识库 |
 | `scripts/init-cloudflare.*` / `deploy-cloudflare.*` | Windows 一键初始化云资源 / 一键部署（`.cmd` 入口 + `.ps1` 实现） |
-| `public/` | 登录、商品列表、检索、对话、运维控制台 |
+| `public/` | 登录、商品列表（每页 18 条）、商品详情、检索、对话、运维控制台 |
 
 ## 零、Windows 一键脚本（推荐）
 
@@ -207,6 +207,12 @@ npm run ingest -- --dry-run          # 只看数据量，不写任何东西
 | POST | `/api/admin/build-knowledge` | ADMIN_TOKEN | 分页构建知识库 |
 
 检索的 `hybrid` 模式用 **RRF（1/(60+rank)）** 融合关键词与语义结果，避免两类分数不可比；`semantic` 走 Vectorize metadata 过滤（默认只返回「已上架」）。
+
+**前端交互约定**：
+
+- 商品列表固定每页 18 条，由 `src/config.ts` 的 `DEFAULT_PAGE_SIZE` 统一约束（API 默认值与 DB 兜底共用）。
+- 点击商品卡片进入 `#/product/<SKU>` 详情页：hash 路由可直接分享、刷新与浏览器前进/后退；展示主图与图库、完整参数、规格简介、阶梯价、物流配送、视频链接，并提供「向 AI 咨询 / 找同类商品 / 复制 SKU」以及同类目已上架商品的相关推荐。
+- 对话回复里的商品卡片**只展示前 3 条**（后端仍返回最多 6 条引用），每张卡片均可跳转详情，超出部分给出文字提示；历史会话回放同样适用。
 
 ## 四、数据现状与处理策略
 

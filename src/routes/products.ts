@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { requireAuth } from '../auth';
-import { MAX_PAGE_SIZE } from '../config';
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '../config';
 import { getFacets, getProductBySku, listProducts, withSql } from '../db';
 import type { HonoEnv } from '../types';
 
@@ -18,7 +18,7 @@ router.get('/', async (c) => {
   const result = await withSql(c.env, (sql) =>
     listProducts(sql, {
       page: number(q.page) ?? 1,
-      pageSize: Math.min(number(q.pageSize) ?? 20, MAX_PAGE_SIZE),
+      pageSize: Math.min(number(q.pageSize) ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE),
       q: q.q,
       category: q.category,
       tenant: q.tenant,
