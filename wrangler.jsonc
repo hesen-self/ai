@@ -50,12 +50,8 @@
 			"binding": "HYPERDRIVE",
 			"id": "04964b18b89d442d8f5d361c022840b5",
 		},
-		{
-			"binding": "NeonDB",
-			"id": "04964b18b89d442d8f5d361c022840b5"
-		},
 	],
-	// AI Search：当前默认检索引擎（Vectorize 为回退）。namespace 绑定用于 Items API 上传文档。
+	// AI Search：知识库专属检索引擎（SKU 商品检索强制 Vectorize，不再共享引擎选择）。
 	// 本地 wrangler dev 需要 `npx wrangler dev --remote`，AI Search 不在本地模拟。
 	"ai_search_namespaces": [
 		{
@@ -68,7 +64,5 @@
 		"CHAT_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
 		"VECTORIZE_INDEX_NAME": "product-catalog",
 		"AI_SEARCH_INSTANCE": "product-catalog-search",
-		// 已切到 AI Search 托管检索；回退只需改回 vectorize 并重新部署（代码/索引都不用删）。
-		"SEARCH_ENGINE": "ai_search",
 	},
 }
