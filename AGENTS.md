@@ -21,6 +21,10 @@ Cloudflare Workers（Hono）+ Workers AI + Vectorize + Hyperdrive(PostgreSQL) �
 4. `.workbuddy/` 是项目数据不是缓存：只追加，不删除，不重写历史事件。
 5. 部署、提交、推送等外部动作，必须由用户明确要求后才执行。
 6. **文件树同步**：每次新增项目源文件（`src/`、`scripts/`、`sql/`、`public/` 下任何新文件），必须同步更新本文件下方的《项目文件树》描述，为新文件补充职能说明。
+7. **前端路由**：必须走 `public/app.js` 中的 SPA path 路由系统（`VIEW_PATH` / `viewFromPath()` / `switchView()` / `applyPath()`），**禁止改回 hash 路由**或引入其他路由方案；新增视图必须在 `VIEW_PATH` 和 `switchView()` 中同步登记。
+8. **刷新保持视图**：新增视图后必须手动在浏览器刷新 `/新路径` 验证 —— 页面必须回到正确面板、登录态保持、不闪登录页。详见下文《前端路由规范与踩坑记录》。
+9. **SPA fallback**：wrangler.jsonc 的 `assets.not_found_handling: "single-page-application"` 是后端前提，**禁止删除**。
+10. **TDZ 警告**：app.js 顶部的 `const VIEW_PATH` 必须在 `const state` 之前声明（`state.view` 初始化会调用 `viewFromPath()`），调整位置会触发 `ReferenceError: Cannot access 'VIEW_PATH' before initialization`。
 
 ## 常用命令
 ```bash
@@ -30,6 +34,104 @@ npm run agent:check      # 质量检查 + 报告
 npm run agent:guard      # 提交门禁
 npm run agent:digest     # 开发习惯周报
 ```
+
+## 前端路由规范与踩坑记录
+
+> 本节必须保留 —— 这是多次失败后积累的规则，后续改路由/加页面时务必逐条对照。
+
+### 架构
+
+本项目前端是 **单 HTML 文件（`public/index.html`）+ 原生 JS SPA path 路由**：
+
+| 组件 | 文件 | 职责 |
+|------|------|------|
+| SPA fallback | `wrangler.jsonc` → `assets.not_found_handling: "single-page-application"` | 所有非 `/api/*` 路径返回 index.html |
+| 路由表 | `app.js` → `const VIEW_PATH` | 视图名 → URL 路径映射；`product` 详情页由 `/product/<sku>` 正则单独处理 |
+| 路径解析 | `viewFromPath()` / `skuFromPath()` | 从 `location.pathname` 反推视图名或 SKU |
+| 面板切换 | `switchView(view)` | 设置 `state.view`、同步 `.nav-item.active`、控制 `main > .panel` 的 `hidden`、同步 URL |
+| 路由恢复 | `applyPath()` | 启动 / popstate 时调用，从 pathname 恢复视图 |
+| 后端入口 | `/api/auth/session` (GET) | 启动时 boot() 调此接口，决定显示登录还是主界面 |
+
+### 当前路由表
+
+```
+/                → products  (不写 hash，URL 最干净)
+/search          → search
+/chat            → chat
+/admin           → admin
+/product/<SKU>   → product   (动态参数，由正则 /^\/product\/(.+)$/ 匹配)
+```
+
+### 踩坑记录（务必逐条遵守）
+
+#### 坑 1：刷新 `/chat` 跳到商品列表（panel.hidden 从未被同步）
+
+**根因**：`state.view` 在初始化时从 pathname 读对了，但它只是 JS 变量。真正决定面板显隐的是 `<section class="panel" hidden>` 的 DOM 属性。`switchView()` 才是设置 `panel.hidden` 的地方。
+
+之前的代码：
+```js
+const view = viewFromPath();
+if (view && view !== state.view) switchView(view);  // ← 守卫条件错了！
+```
+
+`state.view` 初始化已经是 `'chat'`，`viewFromPath()` 也返回 `'chat'`，守卫跳过 → `switchView` 从未被调用 → `panel.hidden` 保持 HTML 默认值（`view-products` 可见）。
+
+**修复**：去掉 `!== state.view` 守卫。`switchView` 是幂等的，重复调用只是重复设置相同的 hidden 值：
+```js
+if (view) switchView(view);  // 无条件调用，保证 DOM 一定同步
+```
+
+#### 坑 2：TDZ —— `VIEW_HASH` 移到 `state` 之前才能访问
+
+**根因**：ES6 `const` 在声明语句执行前处于 TDZ（暂时性死区），访问直接抛 `ReferenceError: Cannot access 'VIEW_HASH' before initialization`。
+
+app.js 第 4 行 `const state = { view: viewFromPath() || 'products', ... }` 调用了 `viewFromPath()`，而它内部访问 `VIEW_HASH`/`VIEW_PATH`。如果这个常量写在 `state` 之后（之前就是第 188 行才声明），启动就崩。
+
+**修复**：`VIEW_PATH` 必须写在文件最顶部、`state` 之前。已加注释标明：
+```js
+// 必须在 state 之前声明，因为 state.view 初始化时会调用 viewFromPath() 访问本常量。
+const VIEW_PATH = { ... };
+const state = { view: viewFromPath() || 'products', ... };
+```
+
+#### 坑 3：刷新先闪登录页再跳回主界面
+
+**根因**：HTML 里 `#login-view` 默认可见（无 `hidden`），`#shell` 默认 hidden。boot() 里 `fetch('/api/auth/session')` 几百毫秒网络延迟期间，用户看到的是登录表单。
+
+**修复**：三保险：
+1. HTML 默认 **两个都 hidden**：`<div id="login-view" hidden>` + `<div id="shell" hidden>`
+2. 新增 `#boot-loading` 占位（logo 呼吸动画 + "正在连接商品知识库…"），HTML 默认可见
+3. `showLogin()` 和 `enterApp()` 里**先** `$('#boot-loading').hidden = true`，再显示正确视图
+
+启动时序：
+```
+HTML 渲染 → boot-loading 可见（logo 呼吸）
+boot() → /api/auth/session
+  → 有用户: hide loading → hide login → show shell ✓
+  → 无用户: hide loading → hide shell → show login ✓
+```
+
+#### 坑 4：hash 路由 → path 路由（已完成，禁止回退）
+
+之前用 `#/chat` 这类 hash 路由。因 TDZ 和刷新体验问题改为 path 路由（`/chat`）。wrangler.jsonc 的 `not_found_handling: "single-page-application"` 是前提——**禁止改回 hash 或删除 fallback**。
+
+关键变化点：
+- `location.hash` → `location.pathname`
+- `hashchange` 事件 → `popstate` 事件（浏览器前进/后退）
+- `location.hash = target` → `history.pushState(null, '', target)`
+- 路由常量名 `VIEW_HASH` → `VIEW_PATH`（值从 `'#/chat'` 变为 `'/chat'`）
+
+### 新增视图 Checklist
+
+每次加新页面（如 `/orders`、`/favorites` 等）必须按此清单执行：
+
+- [ ] `public/index.html`：在 `<main>` 下加新 `<section id="view-xxx" class="panel" hidden>`，结构参考现有 panel
+- [ ] `public/app.js` 顶部：`VIEW_PATH` 里加一项 `xxx: '/xxx'`
+- [ ] `switchView()`：加 `if (view === 'xxx') loadXxx()` 等副作用
+- [ ] `public/style.css`：新 panel 的样式（如果非通用）
+- [ ] `wrangler.jsonc`：**不需要改**——fallback 已覆盖所有非 `/api/*` 路径
+- [ ] **浏览器验证**：登录后访问 `/新路径`，刷新 → 必须保持在新页面、登录态保持、**无登录闪屏**
+- [ ] `AGENTS.md` 文件树：同步更新
 
 ## 项目文件树
 
