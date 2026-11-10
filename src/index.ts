@@ -6,6 +6,7 @@ import type { HonoEnv } from './types';
 import adminRoutes from './routes/admin';
 import authRoutes from './routes/auth';
 import chatRoutes from './routes/chat';
+import notificationsRoutes from './routes/notifications';
 import productsRoutes from './routes/products';
 import searchRoutes from './routes/search';
 
@@ -45,6 +46,7 @@ app.route('/api/auth', authRoutes);
 app.route('/api/products', productsRoutes);
 app.route('/api/search', searchRoutes);
 app.route('/api/chat', chatRoutes);
+app.route('/api/notifications', notificationsRoutes);
 app.route('/api/admin', adminRoutes);
 
 app.all('/api/*', (c) => c.json({ error: '接口不存在' }, 404));

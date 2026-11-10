@@ -12,6 +12,10 @@ const state = {
   sending: false,
   currentSku: null,
   adminToken: sessionStorage.getItem('cf_admin_token') || '',
+  notifications: [],
+  notifyUnread: 0,
+  notifyDrawerOpen: false,
+  notifyPollTimer: null,
 };
 
 const esc = (value) =>
@@ -173,6 +177,8 @@ $('#auth-form').addEventListener('submit', async (event) => {
 
 $('#logout-btn').addEventListener('click', async () => {
   await api('/api/auth/logout', { method: 'POST' }).catch(() => null);
+  stopNotifyPolling();
+  closeNotifyDrawer();
   showLogin();
 });
 
@@ -652,6 +658,151 @@ async function loadSessions() {
   }
 }
 
+/* ------------------------------ 站内信 -------------------------------- */
+
+const NOTIFY_POLL_INTERVAL = 30000; // 30s 轮询一次未读数
+
+async function fetchUnreadCount() {
+  try {
+    const { count } = await api('/api/notifications/unread-count');
+    state.notifyUnread = count;
+    updateNotifyBadge();
+  } catch { /* 静默 */ }
+}
+
+async function fetchNotifications() {
+  try {
+    const { notifications, unreadCount } = await api('/api/notifications');
+    state.notifications = notifications;
+    state.notifyUnread = unreadCount;
+    updateNotifyBadge();
+    renderNotifications();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function updateNotifyBadge() {
+  const badge = $('#notify-badge');
+  if (state.notifyUnread > 0) {
+    badge.textContent = state.notifyUnread > 99 ? '99+' : state.notifyUnread;
+    badge.hidden = false;
+  } else {
+    badge.hidden = true;
+  }
+}
+
+function renderNotifications() {
+  const list = $('#notify-list');
+  if (!state.notifications.length) {
+    list.innerHTML = '<p class="muted notify-empty">暂无通知</p>';
+    return;
+  }
+  list.innerHTML = state.notifications.map((n) => {
+    const unread = !n.readAt;
+    const link = n.payload?.link;
+    const time = formatTime(n.createdAt);
+    const typeIcon = { system: '📢', product: '📦', chat: '💬', admin: '🛠' }[n.type] ?? '🔔';
+    return `
+      <div class="notify-item ${unread ? 'unread' : ''}" data-id="${esc(n.id)}" data-link="${esc(link || '')}">
+        <span class="notify-item-type">${typeIcon}</span>
+        <div class="notify-item-body">
+          <div class="notify-item-head">
+            <span class="notify-item-title">${esc(n.title)}</span>
+            <span class="notify-item-time">${esc(time)}</span>
+          </div>
+          ${n.content ? `<p class="notify-item-content">${esc(n.content)}</p>` : ''}
+        </div>
+        ${unread ? '<span class="notify-item-dot" aria-hidden="true"></span>' : ''}
+      </div>`;
+  }).join('');
+
+  // 点击条目：标记已读 + 跳转（如果有 link）
+  list.querySelectorAll('.notify-item').forEach((el) => {
+    el.addEventListener('click', async () => {
+      const id = Number(el.dataset.id);
+      const link = el.dataset.link;
+      if (link) {
+        closeNotifyDrawer();
+        location.hash = link;
+      }
+      try {
+        await api(`/api/notifications/${id}/read`, { method: 'POST' });
+        // 乐观更新
+        const item = state.notifications.find((n) => n.id === id);
+        if (item) { item.readAt = new Date().toISOString(); state.notifyUnread = Math.max(0, state.notifyUnread - 1); }
+        updateNotifyBadge();
+        renderNotifications();
+      } catch { /* 静默 */ }
+    });
+  });
+}
+
+function formatTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const now = new Date();
+  const diff = Math.floor((now - d) / 1000);
+  if (diff < 60) return '刚刚';
+  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
+  if (diff < 7 * 86400) return `${Math.floor(diff / 86400)} 天前`;
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+function openNotifyDrawer() {
+  state.notifyDrawerOpen = true;
+  $('#notify-drawer').hidden = false;
+  $('#notify-backdrop').hidden = false;
+  fetchNotifications();
+}
+
+function closeNotifyDrawer() {
+  state.notifyDrawerOpen = false;
+  $('#notify-drawer').hidden = true;
+  $('#notify-backdrop').hidden = true;
+}
+
+function startNotifyPolling() {
+  fetchUnreadCount();
+  stopNotifyPolling();
+  state.notifyPollTimer = setInterval(() => {
+    if (!state.notifyDrawerOpen) fetchUnreadCount();
+  }, NOTIFY_POLL_INTERVAL);
+}
+
+function stopNotifyPolling() {
+  if (state.notifyPollTimer) {
+    clearInterval(state.notifyPollTimer);
+    state.notifyPollTimer = null;
+  }
+}
+
+// 事件绑定（铃铛 / 关闭 / 全部已读 / 背景点击）
+document.addEventListener('DOMContentLoaded', () => {
+  const bell = $('#notify-bell');
+  if (!bell) return;
+  bell.addEventListener('click', () => {
+    if (state.notifyDrawerOpen) closeNotifyDrawer(); else openNotifyDrawer();
+  });
+  $('#notify-close')?.addEventListener('click', closeNotifyDrawer);
+  $('#notify-backdrop')?.addEventListener('click', closeNotifyDrawer);
+  $('#notify-mark-all')?.addEventListener('click', async () => {
+    try {
+      const { marked } = await api('/api/notifications/read-all', { method: 'POST' });
+      if (marked > 0) {
+        state.notifyUnread = 0;
+        state.notifications.forEach((n) => (n.readAt = n.readAt || new Date().toISOString()));
+        updateNotifyBadge();
+        renderNotifications();
+      }
+    } catch (error) {
+      toast(error.message);
+    }
+  });
+});
+
+
 async function openSession(id) {
   try {
     const { messages } = await api(`/api/chat/sessions/${encodeURIComponent(id)}`);
@@ -778,8 +929,12 @@ $('#admin-schema-btn').addEventListener('click', async () => {
 (async function boot() {
   try {
     const { user } = await api('/api/auth/session');
-    if (user) enterApp(user);
-    else showLogin();
+    if (user) {
+      enterApp(user);
+      startNotifyPolling();
+    } else {
+      showLogin();
+    }
   } catch {
     showLogin();
   }

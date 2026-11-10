@@ -67,7 +67,8 @@ ai/
 │       ├── search.ts             ← 商品搜索：Vectorize hybrid（关键词+语义 RRF 融合），前端检索页接口
 │       ├── products.ts           ← 商品 CRUD：列表/详情/更新/上架下架
 │       ├── auth.ts               ← 登录/注册/会话探测
-│       └── admin.ts              ← 管理接口：DDL 查询、迁移、商品/知识库批量 upsert、知识库构建、AI Search 状态
+│       ├── notifications.ts      ← 站内信：列表/未读计数/标记已读/全部已读/删除；管理员广播在 admin.ts
+│       └── admin.ts              ← 管理接口：DDL 查询、迁移、商品/知识库批量 upsert、知识库构建、AI Search 状态、站内信广播
 │
 ├── scripts/                      ← 运维与开发辅助脚本（Node.js / PowerShell）
 │   ├── ingest.mjs                ← 商品数据导入：读取 docs/*.json → normalize → upsert PG → upsert Vectorize
@@ -82,6 +83,7 @@ ai/
 ├── sql/                          ← PostgreSQL 迁移（按文件名序号执行）
 │   ├── 001_init.sql              ← 建表：users、products、knowledge_docs、sessions、messages、ai_search_sync
 │   ├── 002_ai_search_sync.sql    ← ai_search_sync 表补全：hash 列、索引
+│   ├── 003_notifications.sql     ← 站内信：notifications 表 + 未读索引
 │   └── README.md                 ← 迁移规范说明
 │
 ├── docs/

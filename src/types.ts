@@ -217,6 +217,17 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface Notification {
+  id: number;
+  userId: number;
+  type: 'system' | 'product' | 'chat' | 'admin';
+  title: string;
+  content: string | null;
+  payload: Record<string, unknown>;
+  readAt: string | null;
+  createdAt: string;
+}
+
 export interface ChatProductRef {
   index: number;
   skuCode: string;

@@ -7,6 +7,7 @@
  */
 import initSql from '../sql/001_init.sql';
 import aiSearchSyncSql from '../sql/002_ai_search_sync.sql';
+import notificationsSql from '../sql/003_notifications.sql';
 import { splitStatements } from './sql-split';
 
 export interface Migration {
@@ -21,6 +22,7 @@ export interface Migration {
 export const MIGRATIONS: Migration[] = [
   { file: '001_init.sql', sql: initSql },
   { file: '002_ai_search_sync.sql', sql: aiSearchSyncSql },
+  { file: '003_notifications.sql', sql: notificationsSql },
 ];
 
 /** 供 /api/admin/migrate 逐条执行，保持与原实现相同的接口。 */

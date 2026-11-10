@@ -16,6 +16,7 @@ import {
   NS_SKU,
 } from '../config';
 import {
+  broadcastNotification,
   getFacets,
   getProductHashes,
   markProductsSynced,
@@ -180,6 +181,32 @@ router.post('/ai-search/sync', async (c) => {
   const force = body.force === true;
   const result = await syncAiSearchBatch(c.env, kind, offset, limit, force);
   return c.json({ ok: true, ...result });
+});
+
+/**
+ * 管理员广播站内信。
+ * body: { userIds?: string[], roles?: string[], type, title, content?, payload? }
+ * userIds 和 roles 可同时传，接收人取并集；两者都不传则不发。
+ */
+router.post('/notifications/broadcast', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const type = String(body.type ?? 'system');
+  const title = String(body.title ?? '').trim();
+  if (!title) return c.json({ error: 'title 必填' }, 400);
+  if (!body.userIds?.length && !body.roles?.length) {
+    return c.json({ error: 'userIds 或 roles 至少传一个' }, 400);
+  }
+  const count = await withSql(c.env, (sql) =>
+    broadcastNotification(sql, {
+      userIds: body.userIds,
+      roles: body.roles,
+      type,
+      title: title.slice(0, 120),
+      content: body.content,
+      payload: body.payload,
+    }),
+  );
+  return c.json({ ok: true, sent: count });
 });
 
 export default router;
