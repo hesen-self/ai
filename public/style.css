@@ -148,10 +148,10 @@ main { max-width: 1440px; margin: 0 auto; padding: 26px; }
 .msg.system { align-self: center; color: var(--muted); font-size: 12px; }
 .msg-products { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin-top: 10px; white-space: normal; }
 .msg-intent { display: inline-block; margin-top: 8px; padding: 3px 9px; border-radius: 999px; font-size: 11px; color: var(--primary); background: var(--primary-soft); border: 1px solid rgba(109,140,255,.3); white-space: normal; }
-.mini-card { background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 0; font-size: 12px; display: flex; gap: 10px; align-items: stretch; min-width: 0; white-space: normal; overflow: hidden; }
-.mini-thumb { width: 72px; flex: 0 0 72px; background: var(--surface-2); display: grid; place-items: center; overflow: hidden; color: var(--muted); font-size: 22px; }
+.mini-card { background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 8px; font-size: 12px; display: flex; gap: 10px; align-items: stretch; min-width: 0; white-space: normal; overflow: hidden; }
+.mini-thumb { width: 72px; height: 72px; flex: 0 0 72px; border-radius: 7px; background: var(--surface-2); display: grid; place-items: center; overflow: hidden; color: var(--muted); font-size: 22px; }
 .mini-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.mini-info { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; padding: 8px 10px 8px 0; justify-content: center; }
+.mini-info { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; justify-content: center; }
 .mini-card .mini-name { color: var(--text); line-height: 1.4; margin-bottom: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
 .mini-card .mini-price { color: var(--accent); font-weight: 650; }
 .mini-card .mini-link { color: var(--primary); font-size: 11px; margin-top: 2px; }

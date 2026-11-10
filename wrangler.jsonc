@@ -15,8 +15,17 @@
 	],
 	// 配置 routes 后 workers.dev 默认关闭；显式保留，便于证书签发期间验证
 	"workers_dev": true,
+	// 链路追踪 & 日志：Worker 执行的每个请求产生 trace 和 log，可在 Cloudflare 仪表板实时查看
 	"observability": {
-		"enabled": true,
+		"traces": {
+			"enabled": true,
+			// 100% 采样：流量小（导购系统），全量保留便于排查
+			"head_sampling_rate": 1.0,
+		},
+		"logs": {
+			"enabled": true,
+			"head_sampling_rate": 1.0,
+		},
 	},
 	// 把 sql/*.sql 作为文本模块打包，让 src/schema.ts 可以直接 import DDL 文件
 	"rules": [

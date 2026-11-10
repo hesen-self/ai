@@ -12,8 +12,39 @@ import searchRoutes from './routes/search';
 
 const app = new Hono<HonoEnv>();
 
+/** 请求级结构化日志中间件：Cloudflare Observability 会自动采集 console 输出到 trace。 */
+app.use('*', async (c, next) => {
+  const start = Date.now();
+  const path = c.req.path;
+  const method = c.req.method;
+  try {
+    await next();
+  } finally {
+    const duration = Date.now() - start;
+    const status = c.res.status;
+    // 只对 /api/* 路径打业务日志（静态资源不打，避免噪声）
+    if (path.startsWith('/api/')) {
+      console.log(JSON.stringify({
+        level: duration > 2000 ? 'warn' : 'info',
+        ms: duration,
+        method,
+        path,
+        status,
+        ua: c.req.header('user-agent')?.slice(0, 80),
+        colo: c.req.raw.cf?.colo,
+      }));
+    }
+  }
+});
+
 app.onError((error, c) => {
-  console.error('[cf-product-ai]', error);
+  console.error(JSON.stringify({
+    level: 'error',
+    ms: Date.now(),
+    method: c.req.method,
+    path: c.req.path,
+    error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : String(error),
+  }));
   const message = error instanceof Error ? error.message : '服务端内部错误';
   return c.json({ error: message }, 500);
 });

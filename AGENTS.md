@@ -91,8 +91,9 @@ ai/
 │
 ├── public/                       ← 前端静态资源（由 wrangler 直接托管）
 │   ├── index.html                ← SPA 入口：登录页 / 检索页 / 聊天页 / 商品详情页 四个视图
-│   ├── app.js                    ← 全部前端逻辑：视图切换、API 调用、卡片渲染、会话管理
-│   └── style.css                 ← 样式
+│   ├── app.js                    ← 全部前端逻辑：视图切换、API 调用、卡片渲染、会话管理、站内信抽屉
+│   ├── style.css                 ← 样式
+│   └── favicon.svg               ← 浏览器标签页图标（云字徽标）
 │
 └── .workbuddy/                   ← 开发治理数据（只追加，不属于源码）
     ├── skills/dev-governor/      ← 治理 Agent 定义
