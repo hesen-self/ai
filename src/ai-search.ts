@@ -1,10 +1,11 @@
 /**
- * Cloudflare AI Search 客户端（当前默认检索引擎，Vectorize 为回退）。
+ * Cloudflare AI Search 客户端（知识库专属检索引擎；商品 SKU 检索走 Vectorize）。
  *
- * 设计原则：只替换语义检索的召回层，不替换数据层。
- * - 默认引擎由 SEARCH_ENGINE 决定（当前 ai_search），请求参数可显式覆盖；
- * - 调用失败时由路由层降级回 Vectorize，不影响线上可用性；
- * - 结构化查询、回表、会话、登录仍全部走 PostgreSQL / Hyperdrive。
+ * 设计原则：
+ * - AI Search 只负责客服知识库的 chunk 级检索（hybrid + reranking），
+ *   SKU 商品的关键词/语义/RRF 融合统一交给 Vectorize + PostgreSQL；
+ * - queryAiSearch() 同时返回 skuHits 和 kbHits，但调用方可按需忽略；
+ * - 数据同步、幂等创建实例、运维状态查询等能力仍保留，供管理接口使用。
  */
 import {
   AI_SEARCH_INSTANCE,

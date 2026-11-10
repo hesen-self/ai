@@ -16,6 +16,7 @@ export type ChatIntent =
   | 'follow_up'
   | 'general'
   | 'support'
+  | 'sensitive'
   | 'unclear';
 
 export interface IntentDecision {
@@ -33,6 +34,7 @@ export const INTENTS: ChatIntent[] = [
   'follow_up',
   'general',
   'support',
+  'sensitive',
   'unclear',
 ];
 
@@ -42,6 +44,7 @@ export const INTENT_LABELS: Record<ChatIntent, string> = {
   follow_up: '追问上一轮推荐',
   general: '一般对话',
   support: '平台服务咨询',
+  sensitive: '敏感问题',
   unclear: '需求待明确',
 };
 
@@ -52,12 +55,14 @@ export function shouldRecommend(intent: ChatIntent): boolean {
 
 const INTENT_SYSTEM_PROMPT = `你是商品导购对话的意图分类器。只输出一行 JSON，不要解释、不要 Markdown。
 可选 intent：
+- sensitive：涉及政治、暴力、色情、毒品、赌博、歧视、宗教争议、索要回扣红包、假冒/走私渠道、竞品诋毁、个人隐私询问等需拒绝回答的敏感内容
 - recommend：想找商品、求推荐、比价、选购、按预算/用途挑设备
 - product_query：询问商品库里的类目、价格、规格、参数、供应商、库存等事实
 - follow_up：承接上一轮商品推荐的追问或调整（更便宜、第二台、那个有货吗）
 - general：问候、感谢、闲聊、询问助手能力、与商品无关的开放式聊天
 - support：账号、登录、订单、支付、发票、退款、人工客服等平台服务问题
 - unclear：信息太少、无法判断，需要用户补充
+注意：只要是敏感内容一律打 sensitive，不要按 general 或 unclear 分类。
 输出格式：{"intent":"recommend","reason":"不超过20字的判断依据"}
 不要输出 intent 以外的字段，不要编造内容。`;
 
@@ -88,6 +93,24 @@ const ACTION_WORDS = /(推荐|找|买|选|采购|想要|需要|给我|来[一几
 const STRONG_FOLLOWUP = /(它|它们|这个|那个|这[台套件个款]|那[台套件个款]|第[一二三四五六1-6]|刚才|刚刚|上面|前面|上一?条|再给|再来|换成|那款|这款)/;
 const WEAK_FOLLOWUP = /(再|还|换|便宜|贵|其他|别的|呢|吗|相比|对比一下|有货)/;
 
+/** 规则层敏感词：粗粒度正则短路，覆盖典型中文表达；AI 分类作为精准兜底。 */
+const SENSITIVE_PATTERNS: RegExp[] = [
+  // 政治敏感
+  /(习近平|胡锦涛|江泽民|毛泽东|共产党|中共|反政府|推翻政府|革命|示威|游行|暴动|政变|独裁|专制|人权|六四|天安门|法轮功|藏独|疆独|台独|港独|反动|反革命|意识形态|政治敏感)/i,
+  // 暴力恐怖
+  /(炸弹|爆炸|恐怖|袭击|屠杀|自杀式|人肉炸弹|枪杀|斩首|血腥|谋杀|暗杀|劫机|纵火|极端组织|ISIS|东突|圣战|核弹|核武器)/i,
+  // 色情低俗
+  /(色情|黄片|毛片|A片|裸聊|裸照|做爱|性交|交配|操|fuck|sex|porn|av女优|援交|卖淫|嫖娼|淫秽)/i,
+  // 毒品
+  /(毒品|大麻|冰毒|摇头丸|K粉|海洛因|可卡因|鸦片|吸毒|贩毒|制毒|吗啡|鸦片)/i,
+  // 赌博
+  /(赌博|赌钱|赌场|博彩|六合彩|百家乐|德州扑克|返水|网赌)/i,
+  // 商业敏感（导购场景特有）
+  /(回扣|红包|贿赂|好处费|佣金|返点|提成|私返|走私|水货|假冒|仿牌|盗版|黑货|赃物|诋毁|抹黑|恶意竞争)/i,
+  // 个人隐私
+  /(身份证号|银行卡号|银行密码|家庭住址|私人电话|通讯录|聊天记录)/i,
+];
+
 /**
  * 纯规则判定。返回 null 表示「规则不敢下结论」，调用方应交给 AI 分类。
  * 该函数不依赖 Workers 环境，可直接用 Node 做单元测试。
@@ -95,6 +118,13 @@ const WEAK_FOLLOWUP = /(再|还|换|便宜|贵|其他|别的|呢|吗|相比|对�
 export function classifyByRules(message: string, hasHistory: boolean): IntentDecision | null {
   const text = clean(message);
   if (!text) return null;
+
+  // 敏感词优先短路：一旦命中直接拒答，避免流入商品检索或 AI 分类
+  for (const pattern of SENSITIVE_PATTERNS) {
+    if (pattern.test(text)) {
+      return { intent: 'sensitive', shouldRecommend: false, source: 'rule', reason: '检测到敏感关键词' };
+    }
+  }
 
   const chatHit = EXACT_GREETING.test(text) || EXACT_ACK.test(text);
   const productHit = PRODUCT_WORDS.test(text);

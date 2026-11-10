@@ -1,13 +1,14 @@
 import { Hono } from 'hono';
 import { currentUser, requireAuth } from '../auth';
 import { CHAT_MODEL, DEFAULT_TOP_K } from '../config';
-import { queryAiSearch, resolveEngine } from '../ai-search';
+import { aiSearchAvailable, queryAiSearch } from '../ai-search';
 import {
   addMessage,
   deleteSession,
   ensureSession,
   getMessages,
   getProductsBySkus,
+  keywordSearch,
   listSessions,
   renameSession,
   withSql,
@@ -16,7 +17,7 @@ import { embedTexts, queryKbVectors, querySkuVectors } from '../embeddings';
 import { INTENT_LABELS, detectIntent } from '../intent';
 import { clip } from '../normalize';
 import type { ChatIntent } from '../intent';
-import type { ChatMessage, ChatProductRef, HonoEnv } from '../types';
+import type { ChatMessage, ChatProductRef, HonoEnv, VectorizeMatch } from '../types';
 
 const router = new Hono<HonoEnv>();
 
@@ -42,16 +43,19 @@ const GENERAL_FALLBACKS: Record<ChatIntent, string> = {
   follow_up: '可以继续告诉我预算、类目或关键规格，我再帮你缩小范围。',
   general: '你好，我是商品导购助手。告诉我设备类目、预算或关键规格，我就能从商品库里帮你筛选和对比。',
   support: '账号、订单、支付、发票、退款及人工客服等平台服务问题不在我的能力范围内，建议联系平台客服；商品选型、规格对比和价格查询我可以帮你。',
+  sensitive: '抱歉，这个问题我无法回答。作为商品导购助手，我只覆盖设备选购、规格对比和价格查询等导购服务，请换个商品相关的问题。',
   unclear: '还没太确定你的需求。可以说一下想找哪类设备、预算范围或关键规格，我再帮你从商品库里筛选。',
 };
 
 function generalSystemPrompt(intent: ChatIntent): string {
   const focus =
-    intent === 'support'
-      ? '本轮是平台服务类问题：明确说明助手只覆盖商品检索与选购建议，建议联系平台客服，不要承诺代办，也不要假装能查订单。'
-      : intent === 'unclear'
-        ? '本轮信息不足：主动询问设备类目、预算范围或关键规格，引导用户给出采购需求，不要臆测用户想买什么。'
-        : '本轮是寒暄或一般对话：自然回应，并简要说明自己可以帮忙找设备、按预算筛选、对比规格。';
+    intent === 'sensitive'
+      ? '本轮识别到敏感内容：礼貌拒绝回答，明确说明自己是商品导购助手只覆盖设备选购、规格对比、价格查询等导购服务，不要解释敏感话题的任何内容。'
+      : intent === 'support'
+        ? '本轮是平台服务类问题：明确说明助手只覆盖商品检索与选购建议，建议联系平台客服，不要承诺代办，也不要假装能查订单。'
+        : intent === 'unclear'
+          ? '本轮信息不足：主动询问设备类目、预算范围或关键规格，引导用户给出采购需求，不要臆测用户想买什么。'
+          : '本轮是寒暄或一般对话：自然回应，并简要说明自己可以帮忙找设备、按预算筛选、对比规格。';
   return `${GENERAL_SYSTEM_PROMPT}\n4. ${focus}`;
 }
 
@@ -185,51 +189,65 @@ router.post('/', async (c) => {
     const recentUserQueries = history.filter((m) => m.role === 'user').slice(-2).map((m) => m.content);
     const retrievalQuery = clip([...recentUserQueries, message].join(' '), 180);
 
-    const selectedEngine = resolveEngine(c.env, body.engine);
-    let activeEngine: string = selectedEngine;
-    let skuCodes: string[] = [];
-    let scoreBySku = new Map<string, number>();
-    let kbRefs: KnowledgeRef[] = [];
-    let usedAiSearch = false;
+    // —— 组合策略：SKU 强制 Vectorize（关键词 + 语义 RRF 融合），KB 强制 AI Search（chunk 级 reranking），两者并行 ——
+    const [queryVector] = await embedTexts(c.env, [retrievalQuery]);
 
-    // AI Search 是旁路：失败或绑定缺失时自动退回原有 Vectorize 链路。
-    if (selectedEngine === 'ai_search') {
-      try {
-        const result = await queryAiSearch(c.env, retrievalQuery, {
-          topK,
-          mode: 'hybrid',
-          onlyOnSale: true,
-          kbLimit: 3,
-        });
-        skuCodes = result.skuHits.map((hit) => hit.id);
-        scoreBySku = new Map(result.skuHits.map((hit) => [hit.id, hit.score]));
-        kbRefs = result.kbHits.map((hit) => ({
-          title: clip(hit.text.split('\n')[0].replace(/^#\s*/, '') || hit.id, 60),
-          // 超长 item key 会退化成短哈希，此时用文档正文的「关联键」还原可读来源。
-          ref: hit.text.match(/^关联键：(.+)$/m)?.[1]?.trim() || hit.id,
-          kind: 'kb',
-          score: hit.score,
-          text: hit.text,
-        }));
-        usedAiSearch = true;
-      } catch (error) {
-        console.warn('[ai-search] 对话检索失败，降级到 Vectorize：', error);
-        activeEngine = 'vectorize';
-      }
+    const [keywordRows, vectorMatches, kbResult] = await Promise.all([
+      // SKU：关键词检索（PG）
+      withSql(c.env, (sql) => keywordSearch(sql, retrievalQuery, topK * 2, true)),
+      // SKU：语义向量检索（Vectorize SKU namespace）
+      querySkuVectors(c.env, queryVector, topK * 2, { onlyOnSale: true }),
+      // KB：AI Search 托管检索（只取知识库 hits，SKU 由 Vectorize 负责）
+      aiSearchAvailable(c.env)
+        ? queryAiSearch(c.env, retrievalQuery, {
+            topK: 0,
+            mode: 'hybrid',
+            kbLimit: 3,
+          }).catch((err) => {
+            console.warn('[ai-search] 知识库检索失败，降级到 Vectorize KB：', err);
+            return null;
+          })
+        : Promise.resolve(null),
+    ]);
+
+    // RRF 融合关键词 + 语义两路，取 topK
+    function skuOf(m: VectorizeMatch): string {
+      const meta = m.metadata?.sku;
+      return typeof meta === 'string' && meta ? meta : m.id.replace(/^sku:/, '');
     }
+    const rrfMap = new Map<string, { skuCode: string; score: number }>();
+    keywordRows.forEach((row, i) => {
+      const code = String(row.skuCode ?? '');
+      if (!code) return;
+      const item = rrfMap.get(code) ?? { skuCode: code, score: 0 };
+      item.score += 1 / (60 + i);
+      rrfMap.set(code, item);
+    });
+    vectorMatches.forEach((m, i) => {
+      const code = skuOf(m);
+      if (!code) return;
+      const item = rrfMap.get(code) ?? { skuCode: code, score: 0 };
+      item.score += 1 / (60 + i);
+      rrfMap.set(code, item);
+    });
+    const candidates = [...rrfMap.values()].sort((a, b) => b.score - a.score).slice(0, topK);
+    const skuCodes = candidates.map((c) => c.skuCode);
+    const scoreBySku = new Map(candidates.map((c) => [c.skuCode, c.score]));
 
-    if (!usedAiSearch) {
-      // 原有链路：查询向量化 → SKU / 知识库双 namespace 召回。
-      const [queryVector] = await embedTexts(c.env, [retrievalQuery]);
-      const [skuMatches, kbMatches] = await Promise.all([
-        querySkuVectors(c.env, queryVector, topK, { onlyOnSale: true }),
-        queryKbVectors(c.env, queryVector, 3),
-      ]);
-      skuCodes = skuMatches.map((m) => {
-        const meta = m.metadata?.sku;
-        return typeof meta === 'string' && meta ? meta : numberFromMatch(m.id);
-      });
-      scoreBySku = new Map(skuMatches.map((m, i) => [skuCodes[i], m.score]));
+    // KB：AI Search 优先，不可用时降级到 Vectorize KB namespace
+    let kbRefs: KnowledgeRef[] = [];
+    let activeEngine = 'vectorize+ai_search';
+    if (kbResult) {
+      kbRefs = kbResult.kbHits.map((hit) => ({
+        title: clip(hit.text.split('\n')[0].replace(/^#\s*/, '') || hit.id, 60),
+        ref: hit.text.match(/^关联键：(.+)$/m)?.[1]?.trim() || hit.id,
+        kind: 'kb',
+        score: hit.score,
+        text: hit.text,
+      }));
+    } else {
+      activeEngine = 'vectorize';
+      const kbMatches = await queryKbVectors(c.env, queryVector, 3);
       kbRefs = kbMatches.map((m) => ({
         title: String(m.metadata?.title ?? ''),
         ref: String(m.metadata?.ref ?? ''),

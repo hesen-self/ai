@@ -478,7 +478,7 @@ async function loadRelated(product) {
     const data = await api(`/api/products?${params}`);
     const items = (data.items || [])
       .filter((item) => String(item.skuCode) !== String(product.skuCode))
-      .slice(0, 4);
+      .slice(0, 6);
     renderCards($('#product-related'), items, '暂无同类商品');
   } catch {
     renderCards($('#product-related'), [], '相关商品加载失败');
