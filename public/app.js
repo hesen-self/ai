@@ -1,18 +1,18 @@
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 
-/** 主视图 → hash 路由段。默认 products 不写 hash，URL 保持根路径干净。
- *  必须在 state 之前声明，因为 state.view 初始化时会调用 viewFromHash() 访问本常量。 */
-const VIEW_HASH = {
-  search: '#/search',
-  chat: '#/chat',
-  admin: '#/admin',
-  product: null, // 详情页由 #/product/<sku> 单独处理
+/** 主视图 → URL 路径。默认 products 是根路径 /；其他视图用 /xxx。
+ *  必须在 state 之前声明，因为 state.view 初始化时会调用 viewFromPath() 访问本常量。 */
+const VIEW_PATH = {
+  search: '/search',
+  chat: '/chat',
+  admin: '/admin',
+  product: null, // 详情页由 /product/<sku> 单独处理
 };
 
 const state = {
   user: null,
-  view: viewFromHash() || 'products',
+  view: viewFromPath() || 'products',
   page: 1,
   pageSize: 18,
   total: 0,
@@ -144,8 +144,8 @@ function enterApp(user) {
   $('#auth-form').reset();
   $('#shell').hidden = false;
   $('#user-chip').textContent = `${user.displayName || user.email}${user.role === 'admin' ? ' · 管理员' : ''}`;
-  // 根据 hash 恢复视图（或默认 products），进入详情页也会由 applyHash 处理。
-  applyHash();
+  // 根据 pathname 恢复视图（或默认 products），进入详情页也会由 applyPath 处理。
+  applyPath();
   if (state.view === 'products') {
     loadFacets();
     loadProducts();
@@ -193,17 +193,18 @@ $('#logout-btn').addEventListener('click', async () => {
 
 /* -------------------------------- 视图切换 ------------------------------- */
 
-function viewFromHash() {
-  const h = location.hash;
-  if (!h) return null;
-  if (/^#\/product\//.test(h)) return 'product';
-  for (const [view, hash] of Object.entries(VIEW_HASH)) {
-    if (hash && h === hash) return view;
+/** 从 pathname 解析出当前视图名，或 null（根路径 /）。 */
+function viewFromPath() {
+  const p = location.pathname;
+  if (/^\/product\//.test(p)) return 'product';
+  for (const [view, path] of Object.entries(VIEW_PATH)) {
+    if (path && p === path) return view;
   }
   return null;
 }
 
-function switchView(view, { replaceUrl = false } = {}) {
+/** 切换视图，可选是否写入浏览器历史。 */
+function switchView(view, { replaceUrl = false, pushUrl = false } = {}) {
   state.view = view;
   const navView = view === 'product' ? 'products' : view;
   $$('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === navView));
@@ -212,30 +213,36 @@ function switchView(view, { replaceUrl = false } = {}) {
   if (view === 'admin') $('#admin-token').value = state.adminToken;
   window.scrollTo({ top: 0, behavior: 'smooth' });
 
-  // 默认 products 清掉所有 hash，URL 回到 /；其他视图写 hash 便于刷新保留。
-  const targetHash = VIEW_HASH[view];
-  if (targetHash === undefined) {
-    if (location.hash) history.replaceState(null, '', location.pathname + location.search);
-  } else if (targetHash && replaceUrl && location.hash !== targetHash) {
-    history.replaceState(null, '', targetHash);
+  // 同步浏览器 URL：默认 products 回到 /；其他视图写 /path。
+  const targetPath = VIEW_PATH[view] ?? '/';
+  const currentPath = location.pathname;
+  if (targetPath !== currentPath) {
+    if (pushUrl) history.pushState(null, '', targetPath);
+    else if (replaceUrl) history.replaceState(null, '', targetPath);
   }
 }
 
-$$('.nav-item').forEach((button) => button.addEventListener('click', () => switchView(button.dataset.view, { replaceUrl: true })));
+$$('.nav-item').forEach((button) => button.addEventListener('click', () =>
+  switchView(button.dataset.view, { pushUrl: true }),
+));
 
 /* ------------------------------ 商品详情路由 ------------------------------ */
 
-function skuFromHash() {
-  const match = location.hash.match(/^#\/product\/(.+)$/);
+function skuFromPath() {
+  const match = location.pathname.match(/^\/product\/(.+)$/);
   if (!match) return null;
   try { return decodeURIComponent(match[1]); } catch { return null; }
 }
 
 function openProduct(skuCode) {
   if (!skuCode) return;
-  const target = `#/product/${encodeURIComponent(skuCode)}`;
-  if (location.hash === target) showProduct(skuCode);
-  else location.hash = target; // 由 hashchange 统一触发导航，避免重复请求
+  const target = `/product/${encodeURIComponent(skuCode)}`;
+  if (location.pathname === target) {
+    showProduct(skuCode);
+  } else {
+    history.pushState(null, '', target);
+    showProduct(skuCode);
+  }
 }
 
 function showProduct(skuCode) {
@@ -244,17 +251,17 @@ function showProduct(skuCode) {
   loadProductDetail(skuCode);
 }
 
-function applyHash() {
-  const sku = skuFromHash();
+function applyPath() {
+  const sku = skuFromPath();
   if (sku) {
     showProduct(sku);
     return;
   }
-  const view = viewFromHash();
-  if (view && view !== state.view) switchView(view, { replaceUrl: false });
+  const view = viewFromPath();
+  if (view && view !== state.view) switchView(view);
 }
 
-window.addEventListener('hashchange', applyHash);
+window.addEventListener('popstate', applyPath);
 
 // 商品卡片 / 聊天卡片统一事件委托：点击与回车都进入详情。
 document.addEventListener('click', (event) => {
@@ -721,10 +728,13 @@ function renderNotifications() {
   list.querySelectorAll('.notify-item').forEach((el) => {
     el.addEventListener('click', async () => {
       const id = Number(el.dataset.id);
-      const link = el.dataset.link;
+      let link = el.dataset.link;
       if (link) {
         closeNotifyDrawer();
-        location.hash = link;
+        // 兼容旧 hash 格式（#/chat）和新 path 格式（/chat）
+        if (link.startsWith('#')) link = link.slice(1);
+        history.pushState(null, '', link);
+        applyPath();
       }
       try {
         await api(`/api/notifications/${id}/read`, { method: 'POST' });
