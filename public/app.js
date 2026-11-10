@@ -628,10 +628,31 @@ async function loadSessions() {
     const { sessions } = await api('/api/chat/sessions');
     const list = $('#session-list');
     list.innerHTML = sessions.length
-      ? sessions.map((s) => `<button class="session-item ${s.id === state.sessionId ? 'active' : ''}" data-id="${esc(s.id)}">${esc(s.title)}</button>`).join('')
+      ? sessions.map((s) => `<div class="session-item ${s.id === state.sessionId ? 'active' : ''}" role="button" tabindex="0" data-id="${esc(s.id)}"><span class="session-title">${esc(s.title)}</span><button class="session-del" data-del="${esc(s.id)}" title="删除">×</button></div>`).join('')
       : '<p class="muted">暂无历史对话</p>';
-    list.querySelectorAll('.session-item').forEach((button) => {
-      button.addEventListener('click', () => openSession(button.dataset.id));
+    list.querySelectorAll('.session-item').forEach((el) => {
+      const id = el.dataset.id;
+      const open = () => openSession(id);
+      el.addEventListener('click', open);
+      el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    });
+    list.querySelectorAll('.session-del').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.del;
+        if (!confirm('确定删除这条对话记录吗？')) return;
+        try {
+          await api(`/api/chat/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+          if (state.sessionId === id) {
+            state.sessionId = null;
+            $('#chat-messages').innerHTML = '';
+            welcomeMessage();
+          }
+          loadSessions();
+        } catch (error) {
+          toast(error.message);
+        }
+      });
     });
   } catch (error) {
     toast(error.message);

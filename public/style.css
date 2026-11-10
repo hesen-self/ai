@@ -135,8 +135,12 @@ main { max-width: 1440px; margin: 0 auto; padding: 26px; }
 .session-panel, .chat-main { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); display: flex; flex-direction: column; overflow: hidden; }
 .session-panel { padding: 12px; }
 .session-list { margin-top: 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
-.session-item { text-align: left; background: transparent; border: 1px solid transparent; color: var(--muted); padding: 10px; border-radius: 8px; font-size: 12px; line-height: 1.5; }
+.session-item { text-align: left; background: transparent; border: 1px solid transparent; color: var(--muted); padding: 10px; border-radius: 8px; font-size: 12px; line-height: 1.5; display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .session-item:hover, .session-item.active { background: var(--surface-2); color: var(--text); border-color: var(--border); }
+.session-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-del { flex: none; opacity: 0; width: 20px; height: 20px; padding: 0; border: none; border-radius: 50%; background: transparent; color: var(--muted); font-size: 14px; line-height: 1; cursor: pointer; transition: opacity .15s, background .15s; }
+.session-item:hover .session-del { opacity: .6; }
+.session-del:hover { opacity: 1 !important; background: rgba(239, 68, 68, .15); color: #ef4444; }
 .chat-messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 18px; }
 .msg { max-width: 82%; line-height: 1.75; }
 .msg.user { align-self: flex-end; background: var(--primary); color: #0d1020; padding: 10px 14px; border-radius: 14px 14px 3px 14px; }
