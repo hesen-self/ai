@@ -128,6 +128,7 @@ function showLogin() {
 function enterApp(user) {
   state.user = user;
   $('#login-view').hidden = true;
+  $('#auth-form').reset();
   $('#shell').hidden = false;
   $('#user-chip').textContent = `${user.displayName || user.email}${user.role === 'admin' ? ' · 管理员' : ''}`;
   loadFacets();
