@@ -1,6 +1,15 @@
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 
+/** 主视图 → hash 路由段。默认 products 不写 hash，URL 保持根路径干净。
+ *  必须在 state 之前声明，因为 state.view 初始化时会调用 viewFromHash() 访问本常量。 */
+const VIEW_HASH = {
+  search: '#/search',
+  chat: '#/chat',
+  admin: '#/admin',
+  product: null, // 详情页由 #/product/<sku> 单独处理
+};
+
 const state = {
   user: null,
   view: viewFromHash() || 'products',
@@ -183,14 +192,6 @@ $('#logout-btn').addEventListener('click', async () => {
 });
 
 /* -------------------------------- 视图切换 ------------------------------- */
-
-/** 主视图 → hash 路由段。默认 products 不写 hash，URL 保持根路径干净。 */
-const VIEW_HASH = {
-  search: '#/search',
-  chat: '#/chat',
-  admin: '#/admin',
-  product: null, // 详情页由 #/product/<sku> 单独处理
-};
 
 function viewFromHash() {
   const h = location.hash;
