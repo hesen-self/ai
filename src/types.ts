@@ -146,6 +146,7 @@ export interface Env {
   ADMIN_PASSWORD?: string;
   EMBEDDING_MODEL?: string;
   CHAT_MODEL?: string;
+  INTENT_MODEL?: string;
   VECTORIZE_INDEX_NAME?: string;
   AI_SEARCH_INSTANCE?: string;
   SEARCH_ENGINE?: string;

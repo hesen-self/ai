@@ -1,6 +1,6 @@
 # 云铺 · Cloudflare 商品知识库与智能导购
 
-基于 **Cloudflare Workers + Workers AI + Vectorize + Hyperdrive(PostgreSQL)** 的全栈项目：把 `docs/` 下的商品 JSON 导入向量库与关系库，提供登录、商品列表、混合检索、商品知识库与对话式推荐。前端是零构建的静态页面，随 Worker 一起部署。检索支持 **Cloudflare AI Search（当前默认）与 Vectorize（可回退）双引擎**，见第八节。
+基于 **Cloudflare Workers + Workers AI + Vectorize + Hyperdrive(PostgreSQL)** 的全栈项目：把 `docs/` 下的商品 JSON 导入向量库与关系库，提供登录、商品列表、混合检索、商品知识库与意图识别驱动的对话推荐。前端是零构建的静态页面，随 Worker 一起部署。检索支持 **Cloudflare AI Search（当前默认）与 Vectorize（可回退）双引擎**，见第八节。
 
 ```
 docs/*.json ── scripts/ingest.mjs ──▶ POST /api/admin/ingest ──┬─▶ PostgreSQL (Hyperdrive)
@@ -25,9 +25,11 @@ PostgreSQL 聚合 ──▶ /api/admin/build-knowledge ──▶ Workers AI ─�
 | `src/embeddings.ts` | Workers AI 向量化、Vectorize upsert / query |
 | `src/ai-search.ts` | AI Search 客户端：实例创建、文档同步、混合检索与降级判定 |
 | `src/ai-search-store.ts` | PG 商品/知识文档渲染为 AI Search 文档 + 同步状态读写 |
+| `src/intent.ts` | 对话意图识别：确定性规则 → Workers AI 分类 → 兜底，决定是否需要商品推荐 |
 | `src/knowledge.ts` | 类目 / 供应商 / 价格带 / 选购指南知识文档生成 |
 | `scripts/ingest.mjs` | 本地导入脚本：读 JSON、分批推送、断点、重试、构建知识库 |
 | `scripts/sync-ai-search.mjs` | AI Search 文档同步脚本：分页、增量、断点、dry-run |
+| `scripts/test-intent.mjs` / `test-frontend.mjs` | 意图规则与降级路径测试 / 前端渲染 DOM 桩测试（`npm test`） |
 | `scripts/init-cloudflare.cmd`、`scripts/init-cloudflare.ps1`、`scripts/deploy-cloudflare.cmd`、`scripts/deploy-cloudflare.ps1` | Windows 一键初始化云资源 / 一键部署（`.cmd` 入口 + `.ps1` 实现） |
 | `public/` | 登录、商品列表（每页 18 条）、商品详情、检索、对话、运维控制台 |
 
@@ -202,7 +204,7 @@ npm run ingest -- --dry-run          # 只看数据量，不写任何东西
 | GET | `/api/products/facets` | 登录 | 类目 / 供应商 / 状态 / 统计 |
 | GET | `/api/products/:skuCode` | 登录 | 单品详情 |
 | POST | `/api/search` | 登录 | `{query, mode: hybrid\|semantic\|keyword, engine?, topK, category, tenant}` |
-| POST | `/api/chat` | 登录 | `{sessionId?, message, topK?, engine?}` → 回答 + 带编号的商品卡片 |
+| POST | `/api/chat` | 登录 | `{sessionId?, message, topK?, engine?}` → 意图识别 + 按需召回；回答 + 带编号的商品卡片 + `intent` / `shouldRecommend` / `engine` |
 | GET/DELETE | `/api/chat/sessions[/:id]` | 登录 | 会话列表 / 消息 / 删除 |
 | GET | `/api/admin/status` `/schema` | ADMIN_TOKEN | 状态 / 完整 DDL |
 | POST | `/api/admin/migrate` | ADMIN_TOKEN | 建表 + 写入管理员账号 |
@@ -215,11 +217,26 @@ npm run ingest -- --dry-run          # 只看数据量，不写任何东西
 
 检索的 `hybrid` 模式用 **RRF（1/(60+rank)）** 融合关键词与语义结果，避免两类分数不可比；`semantic` 走 Vectorize metadata 过滤（默认只返回「已上架」）。
 
+**对话意图识别（按需推荐）**：`src/intent.ts` 在 `/api/chat` 最前面插入一层分类，由 `shouldRecommend` 决定是否检索商品库。
+
+| 意图 | 是否推荐 | 典型输入 |
+| --- | --- | --- |
+| `recommend` | ✅ | 推荐一台香肠去皮机、预算两万、帮我找台设备 |
+| `product_query` | ✅ | 香肠去皮机多少钱、起订量是多少 |
+| `follow_up` | ✅ | 那第二台呢、便宜点的（存在历史会话时） |
+| `general` | ❌ | 你好、谢谢、你能做什么 |
+| `support` | ❌ | 怎么开发票、忘记密码、找客服 |
+| `unclear` | ❌ | 输入过短，主动追问类目 / 预算 / 规格 |
+
+判定链是**确定性规则 → Workers AI 轻量分类 → 兜底**：规则覆盖寒暄、能力询问、平台服务问题、明确找货与多轮指代，命中即返回（零额外延迟、零 neurons）；只有规则不敢下结论的模糊句才多花一次 `AI.run`（`max_tokens: 90`，默认复用 `CHAT_MODEL`，可在 `wrangler.jsonc` 的 `vars` 用 `INTENT_MODEL` 单独换成小模型）。非法 JSON、未知意图、模型异常一律回退到「按商品推荐处理」，保持改造前的行为可用。
+
+只有 `shouldRecommend = true` 才执行检索（默认走 AI Search，失败自动回退 Vectorize 的 embedding + 双 namespace 召回）和 PG 商品查询，并注入导购版系统提示；否则直接用通用对话提示回答（被约束为不编造商品、不承诺处理订单售后），`products` / `knowledge` 返回空数组、`engine` 为 `null`。响应新增 `intent` / `intentLabel` / `intentSource` / `intentReason` / `shouldRecommend`，前端在助手消息上显示「意图识别：xxx · 已检索商品库 / 无需商品推荐」。意图结果未持久化，历史会话回放不显示标签（商品缩略图仍会渲染）。回归测试用 `npm test`。
+
 **前端交互约定**：
 
 - 商品列表固定每页 18 条，由 `src/config.ts` 的 `DEFAULT_PAGE_SIZE` 统一约束（API 默认值与 DB 兜底共用）。
 - 点击商品卡片进入 `#/product/<SKU>` 详情页：hash 路由可直接分享、刷新与浏览器前进/后退；展示主图与图库、完整参数、规格简介、阶梯价、物流配送、视频链接，并提供「向 AI 咨询 / 找同类商品 / 复制 SKU」以及同类目已上架商品的相关推荐。
-- 对话回复里的商品卡片**只展示前 3 条**（后端仍返回最多 6 条引用），每张卡片均可跳转详情，超出部分给出文字提示；历史会话回放同样适用。
+- 对话回复里的商品卡片**只展示前 3 条**（后端仍返回最多 6 条引用），每张卡片均可点击或回车跳转详情，超出部分给出文字提示；**卡片带商品缩略图**（SKU 图 → SPU 封面 → 轮播图首张，只接受 http(s) 或站内路径，含引号 / `javascript:` 的 URL 直接丢弃，加载失败显示占位符），历史会话回放同样显示。
 
 ## 四、数据现状与处理策略
 
@@ -227,7 +244,7 @@ npm run ingest -- --dry-run          # 只看数据量，不写任何东西
 
 - 「商品名称」有大量与商品无关的短句（例如「21世纪开启了一个前所未有的互联互通时代。」），「销售规格」「分类名称」「供应商」才是有效语义来源。因此 `buildEmbedText()` 把**类目放在开头并重复一次**来提权，名称降权，规格、供应商、价格、物流参数跟进；文本裁剪到 360 字以适配 bge-m3 的 512 token 上限。
 - 「重量kg」「体积m3」「商品简介」100% 为 null，「SPU轮播图」「阶梯价格JSON」「物流信息JSON」是**字符串里套 JSON**，已在 `normalize.ts` 统一解析为 JSONB。
-- 检索与推荐默认过滤 `status = '已上架'`，推荐上下文同时注入 SKU 召回结果和知识库条目，LLM 被约束为只能引用编号 `[1][2]`，不得编造商品；生成失败时降级为检索结果直接作答。
+- 检索与推荐默认过滤 `status = '已上架'`，推荐上下文同时注入 SKU 召回结果和知识库条目，LLM 被约束为只能引用编号 `[1][2]`，不得编造商品；生成失败时降级为检索结果直接作答。只有命中商品类意图才检索，寒暄 / 服务类问题不消耗 embedding 与 Vectorize 查询额度。
 - 对话历史、会话、推荐商品编号都持久化在 PostgreSQL。
 
 ## 五、需要你后续提供 / 确认

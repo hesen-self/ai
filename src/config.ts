@@ -3,6 +3,11 @@ export const EMBEDDING_MODEL = '@cf/baai/bge-m3';
 export const EMBEDDING_DIMENSIONS = 1024;
 export const EMBEDDING_METRIC = 'cosine';
 export const CHAT_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
+/**
+ * 意图识别用的模型。默认复用对话模型（线上已验证可用）；
+ * 若对话量大，可在 wrangler.jsonc 的 vars 覆盖为更小的模型以降低 neurons 消耗。
+ */
+export const INTENT_MODEL = CHAT_MODEL;
 export const INDEX_NAME = 'product-catalog';
 
 /** Vectorize 命名空间：SKU 向量与知识库文档向量分开放，检索时分别召回。 */

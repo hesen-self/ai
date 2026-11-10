@@ -113,7 +113,7 @@
 
       <!-- 对话推荐 -->
       <section id="view-chat" class="panel" hidden>
-        <div class="panel-head"><h2>对话推荐</h2><span class="muted">双引擎召回 + 知识库 + Workers AI 生成</span></div>
+        <div class="panel-head"><h2>对话推荐</h2><span class="muted">意图识别 → 双引擎按需检索 → Workers AI 生成</span></div>
         <div class="chat-layout">
           <aside class="session-panel">
             <button class="btn primary block" id="new-session-btn">＋ 新建对话</button>
@@ -122,7 +122,7 @@
           <div class="chat-main">
             <div id="chat-messages" class="chat-messages"></div>
             <div class="chat-input">
-              <input id="chat-input" type="text" placeholder="说说你的采购需求，例如：想要一台小型榨汁机，预算 2000 元" />
+              <input id="chat-input" type="text" placeholder="说说你的采购需求，例如：想要一台小型榨汁机，预算 2000 元；也可以直接打招呼" />
               <button class="btn primary" id="chat-send">发送</button>
             </div>
           </div>

@@ -27,6 +27,16 @@ const money = (value) => `¥${Number(value || 0).toLocaleString('zh-CN', { maxim
 const listOf = (value) => (Array.isArray(value) ? value : []);
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const cell = (value) => esc(value === null || value === undefined || value === '' ? '—' : String(value));
+// 商品图片统一取：SKU 图 → SPU 封面 → 轮播图首张；只接受 http(s) 或站内绝对路径。
+const imageUrlOf = (product) => {
+  const urls = [product?.imageUrl, product?.coverUrl, ...listOf(product?.gallery)];
+  for (const value of urls) {
+    const url = typeof value === 'string' ? value.trim() : '';
+    if (/[\s"'<>]/.test(url)) continue; // 含引号/空白的 URL 一律丢弃，避免属性被污染
+    if (/^https?:\/\//i.test(url) || (url.startsWith('/') && !url.startsWith('//'))) return url;
+  }
+  return '';
+};
 const safeUrl = (value) => {
   const url = String(value ?? '').trim();
   return /^https?:\/\//i.test(url) ? url : '';
@@ -64,7 +74,7 @@ function toast(message) {
 }
 
 function bindImages(container) {
-  container.querySelectorAll('.product-thumb img').forEach((img) => {
+  container.querySelectorAll('.product-thumb img, .mini-thumb img').forEach((img) => {
     img.addEventListener('error', () => {
       const placeholder = document.createElement('span');
       placeholder.textContent = '▧';
@@ -74,8 +84,9 @@ function bindImages(container) {
 }
 
 function productCard(p) {
-  const thumb = p.imageUrl
-    ? `<img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" loading="lazy" />`
+  const image = imageUrlOf(p);
+  const thumb = image
+    ? `<img src="${esc(image)}" alt="${esc(p.name)}" loading="lazy" />`
     : '<span>▧</span>';
   const sourceBadges = Array.isArray(p.sources)
     ? p.sources.map((s) => `<span class="badge">${s === 'semantic' ? '语义' : '关键词'}</span>`).join('')
@@ -533,11 +544,18 @@ async function doSearch() {
 
 /* -------------------------------- 对话推荐 ------------------------------- */
 
-function appendMessage(role, content, products = []) {
+function appendMessage(role, content, products = [], intent = null) {
   const container = $('#chat-messages');
   const el = document.createElement('div');
   el.className = `msg ${role}`;
   el.textContent = content;
+  // 意图识别结果只在本轮展示；历史消息未持久化 intent，回放时保持原样。
+  if (intent && role === 'assistant') {
+    const tag = document.createElement('div');
+    tag.className = 'msg-intent';
+    tag.textContent = `意图识别：${intent.label || '未分类'} · ${intent.shouldRecommend ? '已检索商品库' : '无需商品推荐'}`;
+    el.appendChild(tag);
+  }
   const all = Array.isArray(products) ? products : [];
   if (all.length) {
     // 对话回复可能引用 [1]~[6]，卡片只展示前三条，避免长列表挤占聊天区。
@@ -545,14 +563,24 @@ function appendMessage(role, content, products = []) {
     const box = document.createElement('div');
     box.className = 'msg-products';
     box.innerHTML = shown
-      .map((p) => `<div class="mini-card" data-sku="${esc(p.skuCode)}" role="link" tabindex="0" title="点击查看商品详情">
-        <div class="mini-name">${p.index ? `[${esc(p.index)}] ` : ''}${esc(p.name)}</div>
-        <div class="mini-price">${money(p.price)}</div>
-        <div class="muted">${esc(p.category || '未分类')}</div>
-        <div class="mini-link">查看详情 →</div>
-      </div>`)
+      .map((p) => {
+        const image = imageUrlOf(p);
+        const thumb = image
+          ? `<div class="mini-thumb"><img src="${esc(image)}" alt="${esc(p.name)}" loading="lazy" /></div>`
+          : '<div class="mini-thumb"><span>▧</span></div>';
+        return `<div class="mini-card" data-sku="${esc(p.skuCode)}" role="link" tabindex="0" title="点击查看商品详情">
+        ${thumb}
+        <div class="mini-info">
+          <div class="mini-name">${p.index ? `[${esc(p.index)}] ` : ''}${esc(p.name)}</div>
+          <div class="mini-price">${money(p.price)}</div>
+          <div class="muted">${esc(p.category || '未分类')}</div>
+          <div class="mini-link">查看详情 →</div>
+        </div>
+      </div>`;
+      })
       .join('');
     el.appendChild(box);
+    bindImages(box); // 图片 404 时换成占位符，不留破图
     if (all.length > shown.length) {
       const more = document.createElement('div');
       more.className = 'msg-products-more muted';
@@ -566,7 +594,7 @@ function appendMessage(role, content, products = []) {
 
 function welcomeMessage() {
   $('#chat-messages').innerHTML = '';
-  appendMessage('system', '描述你的采购需求，我会从商品库和知识库里检索后给出推荐。');
+  appendMessage('system', '描述采购需求，我会先判断是否需要推荐，再检索商品库给出建议；也可以直接打招呼、问我能做什么。');
 }
 
 async function loadSessions() {
@@ -589,6 +617,7 @@ async function openSession(id) {
     const { messages } = await api(`/api/chat/sessions/${encodeURIComponent(id)}`);
     state.sessionId = id;
     $('#chat-messages').innerHTML = '';
+    // 历史消息里的 products 带 imageUrl，缩略图在回放时同样渲染。
     messages.forEach((m) => appendMessage(m.role, m.content, m.products));
     if (!messages.length) welcomeMessage();
     $$('.session-item').forEach((b) => b.classList.toggle('active', b.dataset.id === id));
@@ -615,16 +644,21 @@ async function sendChat() {
   input.value = '';
   $('#chat-send').disabled = true;
   appendMessage('user', message);
-  appendMessage('system', '正在检索商品库与知识库…');
+  appendMessage('system', '正在理解你的问题…');
   try {
     const data = await api('/api/chat', {
       method: 'POST',
       body: JSON.stringify({ sessionId: state.sessionId, message, engine: state.searchEngine }),
     });
     $('#chat-messages').lastElementChild?.remove();
-    appendMessage('assistant', data.reply, data.products);
+    appendMessage('assistant', data.reply, data.products, {
+      label: data.intentLabel,
+      shouldRecommend: data.shouldRecommend,
+    });
     state.sessionId = data.sessionId;
-    if (data.degraded) toast('AI 生成暂时不可用，已用检索结果直接作答');
+    if (data.degraded) {
+      toast(data.shouldRecommend ? 'AI 生成暂时不可用，已用检索结果直接作答' : 'AI 生成暂时不可用，已用内置话术作答');
+    }
     loadSessions();
   } catch (error) {
     $('#chat-messages').lastElementChild?.remove();
