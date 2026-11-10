@@ -132,11 +132,18 @@ async function generateReply(
       max_tokens: maxTokens,
       temperature: 0.3,
     });
-    const text =
-      (result as any)?.response ??
-      (result as any)?.choices?.[0]?.message?.content ??
-      (result as any)?.result?.response;
-    return typeof text === 'string' && text.trim() ? text.trim() : '';
+    const r = result as any;
+    // response 有时是已解析的对象（结构化输出），不能让 ?? 短路掉后面的文本候选。
+    const candidates = [
+      r?.response,
+      r?.choices?.[0]?.message?.content,
+      r?.result?.response,
+      r?.result?.choices?.[0]?.message?.content,
+    ];
+    for (const text of candidates) {
+      if (typeof text === 'string' && text.trim()) return text.trim();
+    }
+    return '';
   } catch (error) {
     console.error('Workers AI 生成失败：', error);
     return '';

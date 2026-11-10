@@ -228,7 +228,7 @@ npm run ingest -- --dry-run          # 只看数据量，不写任何东西
 | `support` | ❌ | 怎么开发票、忘记密码、找客服 |
 | `unclear` | ❌ | 输入过短，主动追问类目 / 预算 / 规格 |
 
-判定链是**确定性规则 → Workers AI 轻量分类 → 兜底**：规则覆盖寒暄、能力询问、平台服务问题、明确找货与多轮指代，命中即返回（零额外延迟、零 neurons）；只有规则不敢下结论的模糊句才多花一次 `AI.run`（`max_tokens: 90`，默认复用 `CHAT_MODEL`，可在 `wrangler.jsonc` 的 `vars` 用 `INTENT_MODEL` 单独换成小模型）。非法 JSON、未知意图、模型异常一律回退到「按商品推荐处理」，保持改造前的行为可用。
+判定链是**确定性规则 → Workers AI 轻量分类 → 兜底**：规则覆盖寒暄、能力询问、平台服务问题、明确找货与多轮指代，命中即返回（零额外延迟、零 neurons）；只有规则不敢下结论的模糊句才多花一次 `AI.run`（`max_tokens: 90`，默认复用 `CHAT_MODEL`，可在 `wrangler.jsonc` 的 `vars` 用 `INTENT_MODEL` 单独换成小模型）。Workers AI 对 JSON 输出既可能返回已解析对象、也可能返回带 Markdown 包裹的字符串，`classifyWithAi` 会逐个候选解析；非法 JSON、未知意图、模型异常一律安全降级——含商品信号仍按推荐处理，无商品信号的模糊句改为追问需求，不再强推商品卡片。
 
 只有 `shouldRecommend = true` 才执行检索（默认走 AI Search，失败自动回退 Vectorize 的 embedding + 双 namespace 召回）和 PG 商品查询，并注入导购版系统提示；否则直接用通用对话提示回答（被约束为不编造商品、不承诺处理订单售后），`products` / `knowledge` 返回空数组、`engine` 为 `null`。响应新增 `intent` / `intentLabel` / `intentSource` / `intentReason` / `shouldRecommend`，前端在助手消息上显示「意图识别：xxx · 已检索商品库 / 无需商品推荐」。意图结果未持久化，历史会话回放不显示标签（商品缩略图仍会渲染）。回归测试用 `npm test`。
 

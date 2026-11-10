@@ -135,10 +135,35 @@ export function classifyByRules(message: string, hasHistory: boolean): IntentDec
   return null;
 }
 
-function extractText(result: unknown): string {
+/**
+ * Workers AI 对「看起来像 JSON」的输出可能返回两种形状：
+ * ① response 已被解析成对象（OpenAI chat completion 风格的 `result.response`）；
+ * ② response / choices[0].message.content 是包含 JSON 的字符串，甚至带 Markdown 代码块。
+ * 逐个候选尝试，不能因为第一个候选是对象就短路。
+ */
+function parseIntentPayload(result: unknown): { intent?: unknown; reason?: unknown } | null {
   const r = result as any;
-  const text = r?.response ?? r?.choices?.[0]?.message?.content ?? r?.result?.response;
-  return typeof text === 'string' ? text.trim() : '';
+  const candidates = [
+    r?.response,
+    r?.result?.response,
+    r?.choices?.[0]?.message?.content,
+    r?.result?.choices?.[0]?.message?.content,
+  ];
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === 'object') {
+      if ('intent' in candidate) return candidate as { intent?: unknown; reason?: unknown };
+      continue;
+    }
+    if (typeof candidate !== 'string' || !candidate.trim()) continue;
+    const match = candidate.match(/\{[\s\S]*?\}/);
+    if (!match) continue;
+    try {
+      return JSON.parse(match[0]) as { intent?: unknown; reason?: unknown };
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
 
 /** 用 Workers AI 做一次轻量分类；任何异常都返回 null，由调用方兜底。 */
@@ -165,11 +190,10 @@ export async function classifyWithAi(
       max_tokens: 90,
       temperature: 0,
     });
-    const raw = extractText(result);
-    const match = raw.match(/\{[\s\S]*?\}/);
-    if (!match) return null;
-    const parsed = JSON.parse(match[0]) as { intent?: unknown; reason?: unknown };
-    if (typeof parsed.intent !== 'string' || !INTENTS.includes(parsed.intent as ChatIntent)) return null;
+    const parsed = parseIntentPayload(result);
+    if (!parsed || typeof parsed.intent !== 'string' || !INTENTS.includes(parsed.intent as ChatIntent)) {
+      return null;
+    }
     const intent = parsed.intent as ChatIntent;
     return {
       intent,
@@ -196,11 +220,13 @@ export async function detectIntent(
   const ai = await classifyWithAi(env, message, history);
   if (ai) return ai;
 
-  // 宁可多召回一次，也不要漏掉真实采购需求；保持改造前的行为。
+  // 识别链路不可用时：含商品信号的仍按推荐处理，避免漏掉真实采购需求；
+  // 没有商品信号的模糊句改为追问需求，而不是强行塞一堆商品卡片。
+  const hasProductSignal = PRODUCT_WORDS.test(message);
   return {
-    intent: 'recommend',
-    shouldRecommend: true,
+    intent: hasProductSignal ? 'recommend' : 'unclear',
+    shouldRecommend: hasProductSignal,
     source: 'fallback',
-    reason: '意图识别不可用，按商品推荐处理',
+    reason: hasProductSignal ? '意图识别不可用，按商品推荐处理' : '意图识别不可用，请用户补充需求',
   };
 }

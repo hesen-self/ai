@@ -83,13 +83,13 @@ for (const [name, expected] of [
   ok(`shouldRecommend(${name})`, intent.shouldRecommend(name), expected);
 }
 
-const makeEnv = (response, shouldThrow = false) => {
+const makeEnv = (payload, shouldThrow = false) => {
   const env = {
     AI: {
       run: async () => {
         env.calls += 1;
         if (shouldThrow) throw new Error('AI unavailable');
-        return { response };
+        return typeof payload === 'string' ? { response: payload } : payload;
       },
     },
     calls: 0,
@@ -113,15 +113,28 @@ ok('AI 结果 intent=support', aiDecision.intent, 'support');
 ok('AI 结果不推荐', aiDecision.shouldRecommend, false);
 ok('AI 结果 source=ai', aiDecision.source, 'ai');
 
-// 非法 JSON / 未知 intent / 抛异常，都要安全降级到「按推荐处理」。
+// Workers AI 对 JSON 输出可能返回对象（已解析）或字符串（含 Markdown 代码块），两种都要能识别。
+const responseShapes = [
+  ['binding: response 为对象', { response: { intent: 'support', reason: '问发票' }, choices: [{ message: { content: '{"intent":"support","reason":"问发票"}' } }] }, 'support'],
+  ['REST: result.response 为对象', { result: { response: { intent: 'general', reason: '抱怨生意' }, choices: [{ message: { content: '{"intent":"general","reason":"抱怨生意"}' } }] } }, 'general'],
+  ['仅 choices[0].message.content', { choices: [{ message: { content: '{"intent":"unclear","reason":"信息不足"}' } }] }, 'unclear'],
+];
+for (const [name, payload, expected] of responseShapes) {
+  const env = makeEnv(payload);
+  const decision = await intent.classifyWithAi(env, '最近生意不太好', history);
+  ok(`${name} -> ${expected}`, decision?.intent ?? null, expected);
+  ok(`${name} -> source=ai`, decision?.source ?? null, 'ai');
+}
+
+// 非法 JSON / 未知 intent / 抛异常，都要安全降级；无商品信号的模糊句改为追问而非强推。
 for (const [name, env] of [
   ['非法 JSON', makeEnv('not a json')],
   ['未知 intent', makeEnv('{"intent":"hack"}')],
   ['AI 抛异常', makeEnv('', true)],
 ]) {
   const decision = await intent.detectIntent(env, '最近生意不太好', history);
-  ok(`${name} -> fallback recommend`, decision.intent, 'recommend');
-  ok(`${name} -> 仍然推荐`, decision.shouldRecommend, true);
+  ok(`${name} -> fallback unclear`, decision.intent, 'unclear');
+  ok(`${name} -> 不推荐`, decision.shouldRecommend, false);
   ok(`${name} -> source=fallback`, decision.source, 'fallback');
 }
 
