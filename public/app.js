@@ -927,14 +927,17 @@ $('#admin-schema-btn').addEventListener('click', async () => {
 
 (async function boot() {
   try {
-    const { user } = await api('/api/auth/session');
-    if (user) {
-      enterApp(user);
+    const resp = await fetch('/api/auth/session', { credentials: 'include' });
+    const data = await resp.json();
+    console.log('[boot] session check', { status: resp.status, user: data.user });
+    if (data.user) {
+      enterApp(data.user);
       startNotifyPolling();
     } else {
       showLogin();
     }
-  } catch {
+  } catch (err) {
+    console.error('[boot] session check failed', err);
     showLogin();
   }
   welcomeMessage();

@@ -110,8 +110,8 @@ export async function readSession(token: string, secret: string): Promise<AuthUs
 export function issueCookie(c: Context, token: string): void {
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: new URL(c.req.url).protocol === 'https:',
-    sameSite: 'Lax',
+    secure: true, // 自定义域名 + Cloudflare 强制 HTTPS，固定 Secure 避免 HTTP 边缘 case
+    sameSite: 'Strict', // 生产环境最佳实践：只在同源请求带 cookie，防御 CSRF
     path: '/',
     maxAge: SESSION_TTL_SECONDS,
   });

@@ -85,8 +85,12 @@ router.get('/me', requireAuth, (c) => c.json({ user: currentUser(c) }));
 /** 无需登录即可探测会话状态（前端决定显示登录页还是主界面）。 */
 router.get('/session', async (c) => {
   const token = getCookie(c, SESSION_COOKIE);
-  if (!token || !c.env.JWT_SECRET) return c.json({ user: null });
+  if (!token || !c.env.JWT_SECRET) {
+    console.log(JSON.stringify({ level: 'info', msg: 'session-check', hasCookie: !!token, hasSecret: !!c.env.JWT_SECRET }));
+    return c.json({ user: null });
+  }
   const user = await readSession(token, c.env.JWT_SECRET as string);
+  console.log(JSON.stringify({ level: 'info', msg: 'session-check', userId: user?.id, email: user?.email, valid: !!user }));
   return c.json({ user });
 });
 
