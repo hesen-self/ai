@@ -178,32 +178,25 @@ $('#logout-btn').addEventListener('click', async () => {
 
 /* -------------------------------- 视图切换 ------------------------------- */
 
-/** 支持的主视图 → URL 路径映射。商品详情是特殊路由，由 #/product/<sku> 处理。 */
-const VIEW_ROUTES = {
-  products: 'list',
-  search: 'search',
-  chat: 'chat',
-  admin: 'admin',
+/** 主视图 → hash 路由段。默认 products 不写 hash，URL 保持根路径干净。 */
+const VIEW_HASH = {
+  search: '#/search',
+  chat: '#/chat',
+  admin: '#/admin',
+  product: null, // 详情页由 #/product/<sku> 单独处理
 };
 
-function viewFromHash(): string | null {
-  const path = location.hash.replace(/^#\/?/, '');
-  if (!path) return null;
-  // 详情路由优先：#/product/<sku>
-  if (/^product\//.test(path)) return 'product';
-  const seg = path.split('/')[0];
-  // 反向查映射
-  for (const [view, route] of Object.entries(VIEW_ROUTES)) {
-    if (seg === route) return view;
+function viewFromHash() {
+  const h = location.hash;
+  if (!h) return null;
+  if (/^#\/product\//.test(h)) return 'product';
+  for (const [view, hash] of Object.entries(VIEW_HASH)) {
+    if (hash && h === hash) return view;
   }
   return null;
 }
 
-function switchView(view, { fromHash = false } = {}) {
-  // 离开详情页时静默清掉详情 hash。
-  if (view !== 'product' && location.hash.startsWith('#/product/')) {
-    history.replaceState(null, '', location.pathname + location.search);
-  }
+function switchView(view, { replaceUrl = false } = {}) {
   state.view = view;
   const navView = view === 'product' ? 'products' : view;
   $$('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === navView));
@@ -212,16 +205,16 @@ function switchView(view, { fromHash = false } = {}) {
   if (view === 'admin') $('#admin-token').value = state.adminToken;
   window.scrollTo({ top: 0, behavior: 'smooth' });
 
-  // 非 hash 驱动的切换（用户点击导航）主动写入 hash，便于刷新保留。
-  if (!fromHash && view !== 'product') {
-    const route = VIEW_ROUTES[view];
-    if (route && location.hash !== `#/${route}`) {
-      history.replaceState(null, '', `#/${route}`);
-    }
+  // 默认 products 清掉所有 hash，URL 回到 /；其他视图写 hash 便于刷新保留。
+  const targetHash = VIEW_HASH[view];
+  if (targetHash === undefined) {
+    if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+  } else if (targetHash && replaceUrl && location.hash !== targetHash) {
+    history.replaceState(null, '', targetHash);
   }
 }
 
-$$('.nav-item').forEach((button) => button.addEventListener('click', () => switchView(button.dataset.view)));
+$$('.nav-item').forEach((button) => button.addEventListener('click', () => switchView(button.dataset.view, { replaceUrl: true })));
 
 /* ------------------------------ 商品详情路由 ------------------------------ */
 
@@ -251,7 +244,7 @@ function applyHash() {
     return;
   }
   const view = viewFromHash();
-  if (view && view !== state.view) switchView(view, { fromHash: true });
+  if (view && view !== state.view) switchView(view, { replaceUrl: false });
 }
 
 window.addEventListener('hashchange', applyHash);
