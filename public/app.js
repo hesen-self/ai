@@ -599,7 +599,6 @@ function appendMessage(role, content, products = [], intent = null) {
           <div class="mini-name">${p.index ? `[${esc(p.index)}] ` : ''}${esc(p.name)}</div>
           <div class="mini-price">${money(p.price)}</div>
           <div class="muted">${esc(p.category || '未分类')}</div>
-          <div class="mini-link">查看详情 →</div>
         </div>
       </div>`;
       })
