@@ -93,7 +93,7 @@ async function collectRawItems() {
 async function buildKnowledge() {
   console.log('\n[3/3] 构建商品知识库（类目 / 供应商 / 价格带 / 选购指南）…');
   let offset = 0;
-  let total = 0;
+  let total;
   let embedded = 0;
   let batches = 0;
   for (;;) {

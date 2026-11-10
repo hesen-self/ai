@@ -29,6 +29,8 @@ Cloudflare Workers（Hono）+ Workers AI + Vectorize + Hyperdrive(PostgreSQL) �
 ## 常用命令
 ```bash
 npm run typecheck        # tsc --noEmit
+npm run lint             # ESLint 校验（覆盖 scripts/ 与 public/ 的 JS）
+npm run lint:fix         # ESLint 自动修复
 npm run dev              # wrangler dev
 npm run agent:check      # 质量检查 + 报告
 npm run agent:guard      # 提交门禁
@@ -144,6 +146,7 @@ ai/
 ├── LICENSE                       ← Apache 2.0
 ├── package.json / package-lock.json
 ├── tsconfig.json                 ← TypeScript 配置（strict 模式）
+├── eslint.config.js              ← ESLint 扁平配置（校验 scripts/ 与 public/ 的 JS；src 的 TS 由 tsc 把关，见文件内注释）
 ├── wrangler.jsonc                ← Cloudflare Workers 部署配置 + 绑定（VECTORIZE / AI_SEARCH / HYPERDRIVE / AI）
 ├── .dev.vars.example             ← 本地 dev 环境变量模板（复制为 .dev.vars 使用）
 ├── .githooks/pre-commit          ← Git pre-commit 钩子（由 dev-governor 生成）

@@ -14,6 +14,8 @@
     "predeploy": "npm run sql:check",
     "typecheck": "tsc --noEmit",
     "pretypecheck": "npm run sql:check",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "cf-typegen": "wrangler types",
     "ingest": "node scripts/ingest.mjs",
     "ingest:migrate": "node scripts/ingest.mjs --migrate",
@@ -33,6 +35,9 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261109.1",
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0",
     "typescript": "^7.0.2",
     "wrangler": "^4.158.0"
   }
