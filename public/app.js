@@ -258,7 +258,9 @@ function applyPath() {
     return;
   }
   const view = viewFromPath();
-  if (view && view !== state.view) switchView(view);
+  // 注意：无论 state.view 当前值是什么都必须调 switchView ——
+  // 因为 state.view 初始化时从 pathname 读对了，但 panel.hidden 从来没被同步过。
+  if (view) switchView(view);
 }
 
 window.addEventListener('popstate', applyPath);
