@@ -3,7 +3,7 @@ const $$ = (selector) => [...document.querySelectorAll(selector)];
 
 const state = {
   user: null,
-  view: 'products',
+  view: viewFromHash() || 'products',
   page: 1,
   pageSize: 18,
   total: 0,
@@ -131,10 +131,12 @@ function enterApp(user) {
   $('#auth-form').reset();
   $('#shell').hidden = false;
   $('#user-chip').textContent = `${user.displayName || user.email}${user.role === 'admin' ? ' · 管理员' : ''}`;
-  loadFacets();
-  loadProducts();
-  // 支持带 #/product/<SKU> 的链接：未登录时先登录，登录完成后再进入详情。
+  // 根据 hash 恢复视图（或默认 products），进入详情页也会由 applyHash 处理。
   applyHash();
+  if (state.view === 'products') {
+    loadFacets();
+    loadProducts();
+  }
 }
 
 let authMode = 'login';
@@ -176,8 +178,29 @@ $('#logout-btn').addEventListener('click', async () => {
 
 /* -------------------------------- 视图切换 ------------------------------- */
 
-function switchView(view) {
-  // 离开详情页时静默清掉 hash，避免刷新后又跳回商品详情。
+/** 支持的主视图 → URL 路径映射。商品详情是特殊路由，由 #/product/<sku> 处理。 */
+const VIEW_ROUTES = {
+  products: 'list',
+  search: 'search',
+  chat: 'chat',
+  admin: 'admin',
+};
+
+function viewFromHash(): string | null {
+  const path = location.hash.replace(/^#\/?/, '');
+  if (!path) return null;
+  // 详情路由优先：#/product/<sku>
+  if (/^product\//.test(path)) return 'product';
+  const seg = path.split('/')[0];
+  // 反向查映射
+  for (const [view, route] of Object.entries(VIEW_ROUTES)) {
+    if (seg === route) return view;
+  }
+  return null;
+}
+
+function switchView(view, { fromHash = false } = {}) {
+  // 离开详情页时静默清掉详情 hash。
   if (view !== 'product' && location.hash.startsWith('#/product/')) {
     history.replaceState(null, '', location.pathname + location.search);
   }
@@ -188,6 +211,14 @@ function switchView(view) {
   if (view === 'chat') loadSessions();
   if (view === 'admin') $('#admin-token').value = state.adminToken;
   window.scrollTo({ top: 0, behavior: 'smooth' });
+
+  // 非 hash 驱动的切换（用户点击导航）主动写入 hash，便于刷新保留。
+  if (!fromHash && view !== 'product') {
+    const route = VIEW_ROUTES[view];
+    if (route && location.hash !== `#/${route}`) {
+      history.replaceState(null, '', `#/${route}`);
+    }
+  }
 }
 
 $$('.nav-item').forEach((button) => button.addEventListener('click', () => switchView(button.dataset.view)));
@@ -215,8 +246,12 @@ function showProduct(skuCode) {
 
 function applyHash() {
   const sku = skuFromHash();
-  if (sku) showProduct(sku);
-  else if (state.view === 'product') switchView('products');
+  if (sku) {
+    showProduct(sku);
+    return;
+  }
+  const view = viewFromHash();
+  if (view && view !== state.view) switchView(view, { fromHash: true });
 }
 
 window.addEventListener('hashchange', applyHash);
