@@ -134,12 +134,14 @@ function renderCards(container, items, emptyText) {
 
 function showLogin() {
   state.user = null;
+  $('#boot-loading').hidden = true;
   $('#shell').hidden = true;
   $('#login-view').hidden = false;
 }
 
 function enterApp(user) {
   state.user = user;
+  $('#boot-loading').hidden = true;
   $('#login-view').hidden = true;
   $('#auth-form').reset();
   $('#shell').hidden = false;

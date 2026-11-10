@@ -173,6 +173,26 @@ main { max-width: 1440px; margin: 0 auto; padding: 26px; }
   .toolbar input[type="search"], .toolbar > input, .toolbar select { width: 100%; }
 }
 
+/* ------------------------------ 启动占位 ------------------------------ */
+
+.boot-loading {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.boot-loading .brand-mark {
+  animation: pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: .6; transform: scale(.95); }
+}
+
 /* ------------------------------ 通知 -------------------------------- */
 
 .notify-bell {
