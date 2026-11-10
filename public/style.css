@@ -338,3 +338,73 @@ main { max-width: 1440px; margin: 0 auto; padding: 26px; }
   border-radius: 50%;
   background: #388bfd;
 }
+
+/* ------------------------- 分组工具栏 / 危险操作 ------------------------- */
+
+.tool-group { display: inline-flex; gap: 6px; align-items: center; }
+.tool-group + .tool-group { padding-left: 14px; border-left: 1px solid var(--border); }
+
+.btn.danger { background: transparent; border-color: rgba(255, 107, 107, .55); color: var(--danger); font-weight: 600; }
+.btn.danger:hover { background: rgba(255, 107, 107, .12); border-color: var(--danger); }
+
+.confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .55);
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  animation: fadeIn .15s ease;
+}
+.confirm-card {
+  width: min(420px, calc(100vw - 40px));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 22px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .55);
+}
+.confirm-card h3 { margin: 0 0 8px; font-size: 16px; font-weight: 650; }
+.confirm-card p { font-size: 13px; line-height: 1.7; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+
+/* ------------------------------- 详情页 --------------------------------- */
+
+.more-facts { margin-top: 14px; }
+.more-facts summary {
+  cursor: pointer;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 600;
+  list-style: none;
+}
+.more-facts summary::-webkit-details-marker { display: none; }
+.more-facts summary::before { content: '▸'; display: inline-block; margin-right: 6px; transition: transform .15s; }
+.more-facts[open] summary::before { transform: rotate(90deg); }
+.more-facts-groups { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
+.more-facts-groups h4 { font-size: 13px; color: var(--muted); margin: 12px 0 8px; font-weight: 600; }
+
+/* ------------------------------- 骨架屏 --------------------------------- */
+
+.skeleton-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.skeleton-thumb { height: 140px; background: var(--surface-2); }
+.skeleton-body { padding: 12px; display: flex; flex-direction: column; gap: 9px; }
+.skeleton-line { height: 12px; border-radius: 6px; background: var(--surface-2); animation: pulse 1.4s ease-in-out infinite; }
+.skeleton-line.w80 { width: 80%; }
+.skeleton-line.w60 { width: 60%; }
+.skeleton-line.w40 { width: 40%; }
+
+.empty-actions { margin-top: 14px; }
+
+/* 减少动态效果偏好：关闭呼吸/微光动画 */
+@media (prefers-reduced-motion: reduce) {
+  .boot-loading .brand-mark,
+  .skeleton-card,
+  .skeleton-line { animation: none; }
+}

@@ -18,7 +18,7 @@
     <div class="login-card">
       <div class="brand-mark">云</div>
       <h1>云铺 · 智能商品库</h1>
-      <p class="muted">Cloudflare Workers AI × Vectorize × Hyperdrive</p>
+      <p class="muted">你的智能商品采购助手</p>
 
       <div class="tabs" id="auth-tabs">
         <button class="tab active" data-auth="login">登录</button>
@@ -109,7 +109,7 @@
 
       <!-- 商品检索 -->
       <section id="view-search" class="panel" hidden>
-        <div class="panel-head"><h2>商品检索</h2><span class="muted">关键词 + 向量语义混合召回（RRF 融合）</span></div>
+        <div class="panel-head"><h2>商品检索</h2><span class="muted">一句话描述需求，或用精确关键词，都能找到商品</span></div>
         <div class="search-box">
           <input id="search-input" type="search" placeholder="例如：预算 500 元以内的香肠去皮机 / 不锈钢榨汁设备" />
           <button class="btn primary" id="search-btn">检索</button>
@@ -133,7 +133,7 @@
 
       <!-- 对话推荐 -->
       <section id="view-chat" class="panel" hidden>
-        <div class="panel-head"><h2>对话推荐</h2><span class="muted">意图识别 → 双引擎按需检索 → Workers AI 生成</span></div>
+        <div class="panel-head"><h2>对话推荐</h2><span class="muted">描述你的采购需求，我会检索商品库并给出建议</span></div>
         <div class="chat-layout">
           <aside class="session-panel">
             <button class="btn primary block" id="new-session-btn">＋ 新建对话</button>
@@ -154,12 +154,18 @@
         <div class="panel-head"><h2>运维控制台</h2><span class="muted">需要 ADMIN_TOKEN</span></div>
         <div class="toolbar">
           <input id="admin-token" type="password" placeholder="ADMIN_TOKEN" />
-          <button class="btn ghost" id="admin-status-btn">刷新状态</button>
-          <button class="btn ghost" id="admin-migrate-btn">执行迁移</button>
-          <button class="btn ghost" id="admin-knowledge-btn">构建知识库</button>
-          <button class="btn ghost" id="admin-ai-status-btn">AI Search 状态</button>
-          <button class="btn ghost" id="admin-ai-sync-btn">同步知识库首批</button>
-          <button class="btn ghost" id="admin-schema-btn">查看 DDL</button>
+          <span class="tool-group">
+            <button class="btn ghost" id="admin-status-btn">刷新状态</button>
+            <button class="btn ghost" id="admin-schema-btn">查看 DDL</button>
+            <button class="btn ghost" id="admin-ai-status-btn">AI Search 状态</button>
+          </span>
+          <span class="tool-group">
+            <button class="btn" id="admin-knowledge-btn">构建知识库</button>
+            <button class="btn" id="admin-ai-sync-btn">同步知识库首批</button>
+          </span>
+          <span class="tool-group">
+            <button class="btn danger" id="admin-migrate-btn">执行迁移</button>
+          </span>
         </div>
         <p class="hint">数据初始化请使用本地脚本：<code>npm run ingest:migrate</code> → <code>npm run ingest</code>。Vectorize 写入为最终一致，导入后稍等片刻再检索。</p>
         <pre id="admin-output" class="output">等待操作…</pre>
@@ -168,6 +174,18 @@
   </div>
 
   <div id="toast" class="toast" hidden></div>
+
+  <!-- 危险操作二次确认（运维迁移等），Esc / 背景点击 / 取消按钮均取消 -->
+  <div id="confirm-modal" class="confirm-backdrop" hidden role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="confirm-card">
+      <h3 id="confirm-title"></h3>
+      <p id="confirm-text" class="muted"></p>
+      <div class="confirm-actions">
+        <button id="confirm-cancel" class="btn ghost" type="button">取消</button>
+        <button id="confirm-ok" class="btn danger" type="button">确认执行</button>
+      </div>
+    </div>
+  </div>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

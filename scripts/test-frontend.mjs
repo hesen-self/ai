@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const els = new Map();
 const handlers = {};
+const pushedUrls = []; // 记录 history.pushState 的目标路径（path 路由）
 
 class FakeEl {
   constructor(tag = 'div') {
@@ -52,7 +53,10 @@ const sandbox = {
   },
   window: { addEventListener: reg('win'), scrollTo() {} },
   location: { hash: '', pathname: '/', search: '' },
-  history: { replaceState() {} },
+  history: {
+    replaceState() {},
+    pushState(_state, _unused, url) { pushedUrls.push(String(url)); },
+  },
   sessionStorage: { getItem: () => null, setItem() {} },
   navigator: { clipboard: { writeText: async () => {} } },
   fetch: async () => { throw new Error('offline'); },
@@ -120,7 +124,7 @@ ok('历史回放仍带缩略图', replay.children[0].innerHTML.includes('<img sr
 const card = { dataset: { sku: 'SKU-42' }, closest: () => card };
 t.state.user = { email: 'u@example.com' };
 (handlers['doc:click'] || []).forEach((fn) => fn({ target: card }));
-ok('卡片点击仍可跳详情', sandbox.location.hash === '#/product/SKU-42', sandbox.location.hash);
+ok('卡片点击仍可跳详情', pushedUrls.at(-1) === '/product/SKU-42', pushedUrls.at(-1));
 ok('分页仍为 18', t.state.pageSize === 18);
 
 console.log(failed ? `\nFAILED: ${failed}` : '\nALL FRONTEND CHECKS PASSED');

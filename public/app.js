@@ -290,6 +290,19 @@ function filtersFromForm() {
   };
 }
 
+/** 骨架卡片：首屏或上次失败后 grid 无内容时占位，避免加载期一片空白。 */
+function skeletonCards(count) {
+  return Array.from({ length: count }, () =>
+    `<div class="skeleton-card" aria-hidden="true">
+      <div class="skeleton-thumb"></div>
+      <div class="skeleton-body">
+        <div class="skeleton-line w80"></div>
+        <div class="skeleton-line w60"></div>
+        <div class="skeleton-line w40"></div>
+      </div>
+    </div>`).join('');
+}
+
 async function loadProducts() {
   const filters = filtersFromForm();
   const params = new URLSearchParams({
@@ -301,17 +314,26 @@ async function loadProducts() {
   if (filters.category) params.set('category', filters.category);
   if (filters.tenant) params.set('tenant', filters.tenant);
   if (filters.recommended) params.set('recommended', 'true');
+  const grid = $('#product-grid');
+  // 有旧内容时保留到结果返回（翻页/筛选不闪骨架），无内容才画骨架。
+  if (!grid.querySelector('.product-card')) grid.innerHTML = skeletonCards(12);
   try {
     const data = await api(`/api/products?${params}`);
     state.total = data.total;
-    renderCards($('#product-grid'), data.items, '没有符合条件的商品');
+    renderCards(grid, data.items, '没有符合条件的商品');
     $('#product-stats').textContent = `共 ${data.total.toLocaleString('zh-CN')} 件在售商品`;
     const pages = Math.max(1, Math.ceil(data.total / data.pageSize));
     $('#page-info').textContent = `第 ${data.page} / ${pages} 页`;
     $('#page-prev').disabled = data.page <= 1;
     $('#page-next').disabled = data.page >= pages;
   } catch (error) {
-    toast(error.message);
+    if (grid.querySelector('.skeleton-card')) {
+      // 首屏/重试失败：把错误留在页面上并给重试入口，而不是空白或一闪而过的 toast。
+      grid.innerHTML = `<div class="empty">商品列表加载失败：${esc(error.message)}<div class="empty-actions"><button class="btn" id="retry-products" type="button">重试</button></div></div>`;
+      $('#retry-products').addEventListener('click', loadProducts);
+    } else {
+      toast(error.message);
+    }
   }
 }
 
@@ -327,6 +349,7 @@ async function loadFacets() {
     fill('#filter-tenant', facets.tenants || [], '全部供应商');
   } catch (error) {
     console.warn('筛选条件加载失败', error);
+    toast('筛选条件加载失败，可直接输入关键词搜索');
   }
 }
 
@@ -402,27 +425,45 @@ function renderDetail(p) {
     p.afterSales ? '<span class="badge">支持售后</span>' : '',
   ].join('');
 
-  const facts = [
-    ['SKU 编码', p.skuCode],
-    ['SPU 编码', p.spuCode],
-    ['商品类目', p.category],
+  // 首屏只给采购决策核心字段，其余参数折叠进"更多参数"，避免 16 块参数墙。
+  const factItem = ([label, value]) =>
+    `<div class="fact"><span>${esc(label)}</span><strong>${cell(value)}</strong></div>`;
+  const coreFacts = [
     ['供应商', p.tenant],
-    ['业务类型', p.bizType],
-    ['定价方式', p.pricingType],
-    ['计价单位', p.unit],
-    ['标价', p.listPrice == null ? null : money(p.listPrice)],
-    ['价格区间', p.priceRange],
-    ['起订量', p.minOrder],
     ['库存', p.stock],
-    ['SPU 库存', p.spuStock],
-    ['销量 / 浏览', `${Number(p.sales || 0)} / ${Number(p.views || 0)}`],
-    ['评价数', p.reviews],
-    ['重量 / 体积', `${p.weightKg ?? '—'} kg / ${p.volumeM3 ?? '—'} m³`],
-    ['上架状态', p.status],
+    ['起订量', p.minOrder],
+    ['标价', p.listPrice == null ? null : money(p.listPrice)],
   ];
-  const factsHtml = facts
-    .map(([label, value]) => `<div class="fact"><span>${esc(label)}</span><strong>${cell(value)}</strong></div>`)
-    .join('');
+  const factsHtml = coreFacts.map(factItem).join('');
+
+  const moreGroups = [
+    ['交易', [
+      ['价格区间', p.priceRange],
+      ['定价方式', p.pricingType],
+      ['SPU 库存', p.spuStock],
+      ['计价单位', p.unit],
+    ]],
+    ['规格', [
+      ['SKU 编码', p.skuCode],
+      ['SPU 编码', p.spuCode],
+      ['商品类目', p.category],
+      ['业务类型', p.bizType],
+      ['重量 / 体积', `${p.weightKg ?? '—'} kg / ${p.volumeM3 ?? '—'} m³`],
+    ]],
+    ['运营', [
+      ['销量 / 浏览', `${Number(p.sales || 0)} / ${Number(p.views || 0)}`],
+      ['评价数', p.reviews],
+      ['上架状态', p.status],
+    ]],
+  ];
+  const moreCount = moreGroups.reduce((n, [, rows]) => n + rows.length, 0);
+  const moreHtml = `<details class="more-facts">
+      <summary>更多参数（${moreCount} 项）</summary>
+      <div class="more-facts-groups">
+        ${moreGroups.map(([name, rows]) =>
+          `<div><h4>${esc(name)}</h4><div class="detail-facts">${rows.map(factItem).join('')}</div></div>`).join('')}
+      </div>
+    </details>`;
 
   const tiers = listOf(p.tierPrices);
   const tiersHtml = tiers.length
@@ -459,6 +500,7 @@ function renderDetail(p) {
           <button class="btn ghost" data-detail-action="copy">复制 SKU</button>
         </div>
         <div class="detail-facts">${factsHtml}</div>
+        ${moreHtml}
       </div>
     </div>
     <section class="detail-section"><h3>规格与简介</h3>
@@ -877,6 +919,36 @@ async function sendChat() {
 
 /* --------------------------------- 运维 ---------------------------------- */
 
+/** 轻量确认弹窗：Esc / 背景点击 / 取消均为取消，默认焦点在"取消"（安全默认）。 */
+function confirmDialog(title, text, okLabel = '确认执行') {
+  return new Promise((resolve) => {
+    const modal = $('#confirm-modal');
+    const cancelBtn = $('#confirm-cancel');
+    const okBtn = $('#confirm-ok');
+    $('#confirm-title').textContent = title;
+    $('#confirm-text').textContent = text;
+    okBtn.textContent = okLabel;
+    modal.hidden = false;
+    cancelBtn.focus();
+    const close = (result) => {
+      modal.hidden = true;
+      document.removeEventListener('keydown', onKeydown);
+      cancelBtn.removeEventListener('click', onCancel);
+      okBtn.removeEventListener('click', onOk);
+      modal.removeEventListener('click', onBackdrop);
+      resolve(result);
+    };
+    const onKeydown = (event) => { if (event.key === 'Escape') close(false); };
+    const onCancel = () => close(false);
+    const onOk = () => close(true);
+    const onBackdrop = (event) => { if (event.target === modal) close(false); };
+    document.addEventListener('keydown', onKeydown);
+    cancelBtn.addEventListener('click', onCancel);
+    okBtn.addEventListener('click', onOk);
+    modal.addEventListener('click', onBackdrop);
+  });
+}
+
 function adminHeaders() {
   state.adminToken = $('#admin-token').value.trim();
   sessionStorage.setItem('cf_admin_token', state.adminToken);
@@ -911,7 +983,13 @@ $('#admin-status-btn').addEventListener('click', async () => {
   }
 });
 
-$('#admin-migrate-btn').addEventListener('click', () => adminAction('数据库迁移', '/api/admin/migrate'));
+$('#admin-migrate-btn').addEventListener('click', async () => {
+  const confirmed = await confirmDialog(
+    '执行数据库迁移？',
+    '迁移会按顺序执行 sql/ 下尚未应用的迁移文件，可能改动表结构。确认继续？',
+  );
+  if (confirmed) await adminAction('数据库迁移', '/api/admin/migrate');
+});
 $('#admin-knowledge-btn').addEventListener('click', async () => {
   await adminAction('知识库构建（第 1 批）', '/api/admin/build-knowledge', { offset: 0, limit: 120 });
   toast('如需全量构建，请运行 npm run ingest:knowledge');
