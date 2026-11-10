@@ -68,7 +68,7 @@ main { max-width: 1440px; margin: 0 auto; padding: 26px; }
 .product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(216px, 1fr)); gap: 14px; }
 .product-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column; transition: .15s; }
 .product-card:hover { border-color: var(--primary); transform: translateY(-2px); }
-.product-thumb { aspect-ratio: 4 / 3; background: #fff; padding: 12px; display: grid; place-items: center; color: #b8c0cc; font-size: 30px; line-height: 0; overflow: hidden; }
+.product-thumb { aspect-ratio: 1 / 1; background: #fff; padding: 12px; display: grid; place-items: center; color: #b8c0cc; font-size: 30px; line-height: 0; overflow: hidden; }
 /* 图片保持原始宽高比，只在展示区边界内等比缩小，绝不裁剪。 */
 .product-thumb img { display: block; width: auto; height: auto; max-width: 100%; max-height: 100%; object-fit: contain; }
 .product-body { padding: 12px; display: flex; flex-direction: column; gap: 7px; flex: 1; }
@@ -394,7 +394,7 @@ main { max-width: 1440px; margin: 0 auto; padding: 26px; }
   overflow: hidden;
   animation: pulse 1.4s ease-in-out infinite;
 }
-.skeleton-thumb { aspect-ratio: 4 / 3; background: var(--surface-2); }
+.skeleton-thumb { aspect-ratio: 1 / 1; background: var(--surface-2); }
 .skeleton-body { padding: 12px; display: flex; flex-direction: column; gap: 9px; }
 .skeleton-line { height: 12px; border-radius: 6px; background: var(--surface-2); animation: pulse 1.4s ease-in-out infinite; }
 .skeleton-line.w80 { width: 80%; }
