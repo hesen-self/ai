@@ -1,13 +1,13 @@
 import { Hono } from 'hono';
 import { currentUser, requireAuth } from '../auth';
+import { withSql } from '../db';
 import {
   deleteNotification,
   getUnreadCount,
   listNotifications,
   markAllNotificationsRead,
   markNotificationsRead,
-  withSql,
-} from '../db';
+} from '../db-notifications';
 import type { HonoEnv } from '../types';
 
 const router = new Hono<HonoEnv>();
@@ -69,7 +69,7 @@ router.delete('/:id', async (c) => {
   return ok ? c.json({ ok: true }) : c.json({ error: 'not found' }, 404);
 });
 
-function mapRow(r: Record<string, any>) {
+function mapRow(r: Record<string, unknown>) {
   return {
     id: Number(r.id),
     userId: Number(r.user_id),

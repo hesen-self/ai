@@ -156,8 +156,10 @@ ai/
 │   ├── config.ts                 ← 集中常量：模型 ID、embedding 维度、默认 topK、Vectorize namespace、AI Search 配置
 │   ├── types.ts                  ← 全局类型：Env 绑定、Product、KnowledgeDoc、ChatMessage、VectorizeMatch、AI Search 类型
 │   ├── auth.ts                   ← 简易令牌鉴权：currentUser() / requireAuth() / 密码 PBKDF2 校验
-│   ├── db.ts                     ← PostgreSQL 数据层：连接池、CRUD、关键词搜索、迁移、同步状态表
+│   ├── db.ts                     ← PostgreSQL 数据层：连接池、商品/知识库/会话 CRUD、迁移、聚合统计、Params 占位符工具
+│   ├── db-notifications.ts       ← 站内信数据层（自 db.ts 拆分）：通知列表/未读/已读/删除/广播
 │   ├── embeddings.ts             ← Workers AI 向量化：embedTexts()、SKU/KB Vectorize upsert 与查询
+│   ├── ai-gateway.ts             ← AI Gateway 统一调用策略：元数据、缓存隔离、embedding 内容哈希缓存键
 │   ├── intent.ts                 ← 对话意图识别：规则层（敏感词/寒暄/商品信号/追问）+ AI 层 + 兜底
 │   ├── knowledge.ts              ← 知识库文档构建：从商品库聚合类目/供应商/价格带/选购指南
 │   ├── normalize.ts              ← 商品数据规范化：中文键 → camelCase、日期/价格/布尔值解析、字段裁剪
@@ -182,6 +184,7 @@ ai/
 │   ├── dev-agent.mjs             ← 开发治理 Agent：质量检查、习惯记录、门禁、hooks 生成（dev-governor 执行层）
 │   ├── test-intent.mjs           ← 意图识别规则层单元测试（Node 原生，不依赖 Workers）
 │   ├── test-frontend.mjs         ← 前端逻辑测试：卡片渲染、事件委托、历史会话回放
+│   ├── test-ai-gateway.mjs        ← AI Gateway 调用策略测试：直连降级、聊天禁缓存、embedding 内容缓存
 │   ├── deploy-cloudflare.ps1/cmd ← Windows 一键部署到 Cloudflare Workers
 │   └── init-cloudflare.ps1/cmd   ← Windows 首次初始化：创建 Vectorize 索引、AI Search 实例、PG 表
 │
@@ -194,9 +197,13 @@ ai/
 ├── docs/
 │   └── SKU_collation.json        ← 商品原始数据（中文键），scripts/ingest.mjs 的输入
 │
-├── public/                       ← 前端静态资源（由 wrangler 直接托管）
+├── public/                       ← 前端静态资源（由 wrangler 直接托管；均为经典脚本 + defer 按序加载）
 │   ├── index.html                ← SPA 入口：登录页 / 检索页 / 聊天页 / 商品详情页 四个视图
-│   ├── app.js                    ← 全部前端逻辑：视图切换、API 调用、卡片渲染、会话管理、站内信抽屉
+│   ├── ui.js                     ← DOM 构建器 el()、toast、确认弹窗、格式化工具（动态内容一律走 el()，不用 innerHTML）
+│   ├── render.js                 ← 渲染层：商品卡片、详情页、聊天卡片、骨架屏（全部经 el() 构建）
+│   ├── notify-ui.js              ← 站内信抽屉：未读轮询、列表渲染、已读/跳转交互
+│   ├── admin-ui.js               ← 运维控制台交互：状态/迁移（二次确认）/知识库构建/AI Search 同步
+│   ├── app.js                    ← 前端入口：状态、SPA path 路由（VIEW_PATH 等）、鉴权、各视图数据加载与业务编排
 │   ├── style.css                 ← 样式
 │   └── favicon.svg               ← 浏览器标签页图标（云字徽标）
 │

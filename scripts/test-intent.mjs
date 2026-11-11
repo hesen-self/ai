@@ -19,6 +19,7 @@ const prelude = `
 const CHAT_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 const INTENT_MODEL = CHAT_MODEL;
 const clip = (value, max) => String(value ?? '').slice(0, max);
+const aiGatewayOptions = () => undefined;
 `;
 const sandbox = { console: { info() {}, error() {} } };
 vm.runInNewContext(

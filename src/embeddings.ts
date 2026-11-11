@@ -1,4 +1,5 @@
 import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, NS_KB, NS_SKU } from './config';
+import { aiContentCacheKey, aiGatewayOptions } from './ai-gateway';
 import { clip } from './normalize';
 import type {
   Env,
@@ -9,12 +10,30 @@ import type {
   VectorizeVector,
 } from './types';
 
+export interface EmbedTextsOptions {
+  /** 用户检索文本不缓存；后台重复构建的商品和知识库文本可按内容缓存。 */
+  cache?: boolean;
+  source?: 'user-request' | 'admin-sync' | 'knowledge-build';
+}
+
 /** Workers AI 文本向量化。始终以数组形式传 text，返回与输入等长的向量数组。 */
-export async function embedTexts(env: Env, texts: string[]): Promise<number[][]> {
+export async function embedTexts(
+  env: Env,
+  texts: string[],
+  options: EmbedTextsOptions = {},
+): Promise<number[][]> {
   if (!texts.length) return [];
   const model = env.EMBEDDING_MODEL || EMBEDDING_MODEL;
-  const result = await env.AI.run(model, { text: texts });
-  const raw: unknown = (result as any)?.data ?? (result as any)?.embedding;
+  const cache = options.cache
+    ? { key: await aiContentCacheKey(model, texts), ttl: 60 * 60 * 24 * 7 }
+    : undefined;
+  const result = await env.AI.run(
+    model,
+    { text: texts },
+    aiGatewayOptions(env, { operation: 'embedding', source: options.source || 'user-request', cache }),
+  );
+  const payload = result && typeof result === 'object' ? result as Record<string, unknown> : {};
+  const raw: unknown = payload.data ?? payload.embedding;
   if (!Array.isArray(raw)) throw new Error(`Workers AI 未返回向量数据：${model}`);
 
   const vectors: number[][] =

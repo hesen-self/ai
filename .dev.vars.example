@@ -22,6 +22,8 @@ API_BASE=http://127.0.0.1:8787
 # --- 可选覆盖：不写则使用 wrangler.jsonc 的 vars / src/config.ts 默认值 ---
 # EMBEDDING_MODEL=@cf/baai/bge-m3
 # CHAT_MODEL=@cf/meta/llama-3.3-70b-instruct-fp8-fast
+# 本地开发留空时直连 Workers AI；预发布环境使用单独的 AI Gateway。
+# AI_GATEWAY_ID=product-ai-staging
 # VECTORIZE_INDEX_NAME=product-catalog
 
 # ============================================================

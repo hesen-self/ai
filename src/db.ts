@@ -7,15 +7,15 @@ import type { Env, KnowledgeDoc, Product } from './types';
 export type SqlClient = ReturnType<typeof postgres>;
 
 /** 参数化查询小工具：动态拼接 WHERE 时自动生成 $1/$2... 占位符。 */
-class Params {
-  private values: any[] = [];
+export class Params {
+  private values: Array<string | number | boolean | null> = [];
 
-  add(value: unknown): string {
+  add(value: string | number | boolean | null): string {
     this.values.push(value);
     return `$${this.values.length}`;
   }
 
-  get all(): any[] {
+  get all(): Array<string | number | boolean | null> {
     return this.values;
   }
 }
@@ -41,7 +41,9 @@ export async function withSql<T>(env: Env, fn: (sql: SqlClient) => Promise<T>): 
   try {
     return await fn(sql);
   } finally {
-    await sql.end({ timeout: 5 }).catch(() => undefined);
+    await sql.end({ timeout: 5 }).catch((error) => {
+      console.warn('关闭 PostgreSQL 连接失败：', error);
+    });
   }
 }
 
@@ -105,7 +107,7 @@ const SORTS: Record<string, string> = {
   name: 'name asc, sku_code',
 };
 
-export function mapProductRow(r: Record<string, any>): Record<string, unknown> {
+export function mapProductRow(r: Record<string, unknown>): Record<string, unknown> {
   const num = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
   return {
     skuCode: r.sku_code,
@@ -170,13 +172,13 @@ export async function migrate(env: Env): Promise<{ statements: number; adminSeed
 
 /* ---------------------------------- 用户 ---------------------------------- */
 
-export async function findUserByEmail(sql: SqlClient, email: string): Promise<Record<string, any> | null> {
+export async function findUserByEmail(sql: SqlClient, email: string): Promise<Record<string, unknown> | null> {
   const rows = await sql.unsafe(
     `select id, email, display_name, password_hash, password_salt, role, created_at
      from app_users where email = $1`,
     [email.toLowerCase()],
   );
-  return (rows[0] as Record<string, any>) ?? null;
+  return (rows[0] as Record<string, unknown>) ?? null;
 }
 
 export async function createUser(
@@ -184,7 +186,7 @@ export async function createUser(
   email: string,
   password: string,
   displayName: string,
-): Promise<Record<string, any>> {
+): Promise<Record<string, unknown>> {
   const { hash, salt } = await hashPassword(password);
   const rows = await sql.unsafe(
     `insert into app_users (email, display_name, password_hash, password_salt)
@@ -192,7 +194,7 @@ export async function createUser(
      returning id, email, display_name, role`,
     [email.toLowerCase(), displayName, hash, salt],
   );
-  return rows[0] as Record<string, any>;
+  return rows[0] as Record<string, unknown>;
 }
 
 /* --------------------------------- 商品写入 -------------------------------- */
@@ -228,9 +230,9 @@ export async function getProductHashes(
     [JSON.stringify(skuCodes)],
   );
   return new Map(
-    (rows as Record<string, any>[]).map((r) => [
+    (rows as Array<Record<string, unknown>>).map((r) => [
       String(r.sku_code),
-      { hash: String(r.content_hash ?? ''), syncedAt: r.synced_at ?? null },
+      { hash: String(r.content_hash ?? ''), syncedAt: r.synced_at == null ? null : String(r.synced_at) },
     ]),
   );
 }
@@ -281,8 +283,10 @@ export async function listProducts(
   if (options.maxPrice !== undefined) where.push(`price <= ${p.add(options.maxPrice)}`);
 
   const clause = where.join(' and ');
-  const countRows = await sql.unsafe(`select count(*)::int as total from products where ${clause}`, p.all);
-  const total = Number((countRows[0] as any)?.total ?? 0);
+  const countSql = `select count(*)::int as total from products where ${clause}`;
+  const countRows = await sql.unsafe(countSql, p.all);
+  const count = countRows[0] as Record<string, unknown> | undefined;
+  const total = Number(count?.total ?? 0);
 
   const order = SORTS[options.sort ?? ''] ?? SORTS.updated;
   const rows = await sql.unsafe(
@@ -291,7 +295,7 @@ export async function listProducts(
     p.all,
   );
   return {
-    items: (rows as Record<string, any>[]).map(mapProductRow),
+    items: (rows as Array<Record<string, unknown>>).map(mapProductRow),
     total,
     page,
     pageSize,
@@ -308,12 +312,13 @@ export async function getProductsBySkus(
      where sku_code in (select value::text from jsonb_array_elements_text($1::text::jsonb))`,
     [JSON.stringify(skuCodes)],
   );
-  return (rows as Record<string, any>[]).map(mapProductRow);
+  return (rows as Array<Record<string, unknown>>).map(mapProductRow);
 }
 
 export async function getProductBySku(sql: SqlClient, skuCode: string): Promise<Record<string, unknown> | null> {
-  const rows = await sql.unsafe(`select ${PUBLIC_COLS} from products where sku_code = $1`, [skuCode]);
-  return rows.length ? mapProductRow(rows[0] as Record<string, any>) : null;
+  const productSql = `select ${PUBLIC_COLS} from products where sku_code = $1`;
+  const rows = await sql.unsafe(productSql, [skuCode]);
+  return rows.length ? mapProductRow(rows[0] as Record<string, unknown>) : null;
 }
 
 export async function getFacets(sql: SqlClient): Promise<Record<string, unknown>> {
@@ -363,7 +368,7 @@ export async function keywordSearch(
      limit $2`,
     [pattern, limit],
   );
-  return (rows as Record<string, any>[]).map(mapProductRow);
+  return (rows as Array<Record<string, unknown>>).map(mapProductRow);
 }
 
 /* --------------------------------- 知识库 --------------------------------- */
@@ -405,9 +410,9 @@ export async function getKnowledgeHashes(
     [JSON.stringify(ids)],
   );
   return new Map(
-    (rows as Record<string, any>[]).map((r) => [
+    (rows as Array<Record<string, unknown>>).map((r) => [
       String(r.id),
-      { hash: String(r.content_hash ?? ''), syncedAt: r.synced_at ?? null },
+      { hash: String(r.content_hash ?? ''), syncedAt: r.synced_at == null ? null : String(r.synced_at) },
     ]),
   );
 }
@@ -460,15 +465,15 @@ export async function aggregateKnowledge(
     ) ranked
     group by ${groupCol} order by count desc`;
 
-  const mapRows = (rows: any[]): KnowledgeAggregate[] =>
+  const mapRows = (rows: Array<Record<string, unknown>>): KnowledgeAggregate[] =>
     rows.map((r) => ({
       key: String(r.key),
       count: Number(r.count),
       minPrice: Number(r.min_price),
       maxPrice: Number(r.max_price),
       samples: (r.samples ?? []) as KnowledgeAggregate['samples'],
-      tenants: (r.tenants ?? []).slice(0, 5) as string[],
-      units: (r.units ?? []).slice(0, 5) as string[],
+      tenants: ((r.tenants ?? []) as string[]).slice(0, 5),
+      units: ((r.units ?? []) as string[]).slice(0, 5),
     }));
 
   const [categories, tenants, bands] = await Promise.all([
@@ -482,9 +487,9 @@ export async function aggregateKnowledge(
   ]);
 
   return {
-    categories: mapRows(categories as any[]),
-    tenants: mapRows(tenants as any[]),
-    bands: mapRows(bands as any[]),
+    categories: mapRows(categories as Array<Record<string, unknown>>),
+    tenants: mapRows(tenants as Array<Record<string, unknown>>),
+    bands: mapRows(bands as Array<Record<string, unknown>>),
   };
 }
 
@@ -503,7 +508,7 @@ export async function ensureSession(sql: SqlClient, userId: string, sessionId?: 
      returning id`,
     [userId, title?.slice(0, 60) || '新对话'],
   );
-  return String((created[0] as any).id);
+  return String((created[0] as Record<string, unknown>).id);
 }
 
 export async function listSessions(sql: SqlClient, userId: string) {
@@ -547,125 +552,3 @@ export async function deleteSession(sql: SqlClient, sessionId: string, userId: s
   await sql.unsafe(`delete from chat_sessions where id = $1::uuid and user_id = $2`, [sessionId, userId]);
 }
 
-/* -------------------------------- 站内信 -------------------------------- */
-
-export interface ListNotificationsOptions {
-  limit?: number;
-  unreadOnly?: boolean;
-}
-
-export async function listNotifications(
-  sql: SqlClient,
-  userId: string,
-  options: ListNotificationsOptions = {},
-): Promise<Record<string, unknown>[]> {
-  const limit = Math.min(100, Math.max(1, options.limit ?? 30));
-  const where = options.unreadOnly ? `user_id = $1 and read_at is null` : `user_id = $1`;
-  const rows = await sql.unsafe(
-    `select id, user_id, type, title, content, payload, read_at, created_at
-     from notifications where ${where}
-     order by read_at nulls first, created_at desc
-     limit $2`,
-    [userId, limit],
-  );
-  return rows as Record<string, unknown>[];
-}
-
-export async function getUnreadCount(sql: SqlClient, userId: string): Promise<number> {
-  const rows = await sql.unsafe(
-    `select count(*)::int as count from notifications where user_id = $1 and read_at is null`,
-    [userId],
-  );
-  return Number((rows[0] as any)?.count ?? 0);
-}
-
-export async function markNotificationsRead(
-  sql: SqlClient,
-  userId: string,
-  ids: number[],
-): Promise<number> {
-  if (!ids.length) return 0;
-  const rows = await sql.unsafe(
-    `update notifications set read_at = now()
-     where user_id = $1 and read_at is null
-       and id in (select value::bigint from jsonb_array_elements_text($2::text::jsonb))
-     returning id`,
-    [userId, JSON.stringify(ids)],
-  );
-  return rows.length;
-}
-
-export async function markAllNotificationsRead(sql: SqlClient, userId: string): Promise<number> {
-  const rows = await sql.unsafe(
-    `update notifications set read_at = now() where user_id = $1 and read_at is null returning id`,
-    [userId],
-  );
-  return rows.length;
-}
-
-export async function deleteNotification(
-  sql: SqlClient,
-  id: number,
-  userId: string,
-): Promise<boolean> {
-  const rows = await sql.unsafe(
-    `delete from notifications where id = $1 and user_id = $2 returning id`,
-    [id, userId],
-  );
-  return rows.length > 0;
-}
-
-export async function pushNotification(
-  sql: SqlClient,
-  userId: string,
-  notification: { type: string; title: string; content?: string; payload?: Record<string, unknown> },
-): Promise<void> {
-  await sql.unsafe(
-    `insert into notifications (user_id, type, title, content, payload)
-     values ($1, $2, $3, $4, $5::text::jsonb)`,
-    [userId, notification.type, notification.title, notification.content ?? null, JSON.stringify(notification.payload ?? {})],
-  );
-}
-
-export interface BroadcastOptions {
-  userIds?: string[];          // 指定用户 ID（可选）
-  roles?: string[];            // 按角色广播（可选；admin / user）
-  type: string;
-  title: string;
-  content?: string;
-  payload?: Record<string, unknown>;
-}
-
-export async function broadcastNotification(
-  sql: SqlClient,
-  options: BroadcastOptions,
-): Promise<number> {
-  const p = new Params();
-  const fromClauses: string[] = [];
-
-  if (options.userIds?.length) {
-    fromClauses.push(
-      `select value::bigint as uid from jsonb_array_elements_text(${p.add(JSON.stringify(options.userIds))}::text::jsonb)`,
-    );
-  }
-  if (options.roles?.length) {
-    fromClauses.push(
-      `select id as uid from app_users where role in (select value::text from jsonb_array_elements_text(${p.add(JSON.stringify(options.roles))}::text::jsonb))`,
-    );
-  }
-
-  if (!fromClauses.length) return 0; // 没指定接收人，不发
-
-  const receivers = fromClauses.length > 1
-    ? `(${fromClauses.join(' union ')}) as u`
-    : `(${fromClauses[0]}) as u`;
-
-  const result = await sql.unsafe(
-    `insert into notifications (user_id, type, title, content, payload)
-     select u.uid, ${p.add(options.type)}, ${p.add(options.title)},
-       ${p.add(options.content ?? null)}, ${p.add(JSON.stringify(options.payload ?? {}))}::text::jsonb
-     from ${receivers}`,
-    p.all,
-  );
-  return (result as any)?.count ?? 0;
-}

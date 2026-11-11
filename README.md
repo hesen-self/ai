@@ -23,13 +23,14 @@ PostgreSQL 聚合 ──▶ /api/admin/build-knowledge ──▶ Workers AI ─�
 | `src/schema.ts` | 迁移登记 + SQL 拆句；通过 Wrangler `Text` 模块直接导入 `sql/*.sql`，无第二份副本 |
 | `scripts/check-sql.mjs` | 校验新增 SQL 是否已登记（挂在 `typecheck` / `deploy` 前置钩子） |
 | `src/embeddings.ts` | Workers AI 向量化、Vectorize upsert / query |
+| `src/ai-gateway.ts` | AI Gateway 统一策略：调用元数据、隐私日志约束、缓存隔离与 embedding 内容哈希缓存键 |
 | `src/ai-search.ts` | AI Search 客户端：实例创建、文档同步、混合检索与降级判定 |
 | `src/ai-search-store.ts` | PG 商品/知识文档渲染为 AI Search 文档 + 同步状态读写 |
 | `src/intent.ts` | 对话意图识别：确定性规则 → Workers AI 分类 → 兜底，决定是否需要商品推荐 |
 | `src/knowledge.ts` | 类目 / 供应商 / 价格带 / 选购指南知识文档生成 |
 | `scripts/ingest.mjs` | 本地导入脚本：读 JSON、分批推送、断点、重试、构建知识库 |
 | `scripts/sync-ai-search.mjs` | AI Search 文档同步脚本：分页、增量、断点、dry-run |
-| `scripts/test-intent.mjs` / `test-frontend.mjs` | 意图规则与降级路径测试 / 前端渲染 DOM 桩测试（`npm test`） |
+| `scripts/test-intent.mjs` / `test-frontend.mjs` / `test-ai-gateway.mjs` | 意图规则与降级路径测试 / 前端渲染 DOM 桩测试 / AI Gateway 缓存与隐私策略测试（`npm test`） |
 | `scripts/init-cloudflare.cmd`、`scripts/init-cloudflare.ps1`、`scripts/deploy-cloudflare.cmd`、`scripts/deploy-cloudflare.ps1` | Windows 一键初始化云资源 / 一键部署（`.cmd` 入口 + `.ps1` 实现） |
 | `public/` | 登录、商品列表（每页 18 条）、商品详情、检索、对话、运维控制台 |
 
@@ -153,7 +154,15 @@ npm run deploy
 
 这次部署会同时把 Worker 挂到自定义域名上。本地调试用 `npm run dev`。注意 **Workers AI 绑定始终走云端并消耗 neurons 配额**，`wrangler dev` 也不例外；Vectorize、Hyperdrive 同样需要真实资源。
 
-## 二、初始化数据
+## 二、AI Gateway（生产环境必配）
+
+项目通过现有 `env.AI.run()` 的第三个参数接入 AI Gateway，不需要在 Worker 中保存 Cloudflare API Token。部署前先在 Cloudflare 控制台创建与 `wrangler.jsonc` 的 `AI_GATEWAY_ID` 同名的网关：生产为 `product-ai-prod`，预发布建议另建 `product-ai-staging`。未创建指定网关就部署会导致 AI 调用失败。
+
+网关建议：开启分析、失败重试与滑动窗口限流；日志保留请求数、耗时、token、状态和成本等元数据，但关闭请求/响应正文存储。Workers AI 先保持 Standard billing；只有要使用预充值额度或第三方模型时再切换 Unified Billing。
+
+调用策略由 `src/ai-gateway.ts` 强制区分：聊天回答和意图识别始终 `skipCache`，不允许返回过期会话结果；管理端商品向量化和知识库构建使用 `SHA-256(模型 + 输入文本)` 作为内容寻址缓存键，缓存 7 天。用户检索产生的查询向量不缓存。请求元数据只记录 `operation`、`source` 和缓存类型，不记录用户标识、问题或商品文本。
+
+## 三、初始化数据
 
 ```bash
 # .dev.vars 里配好 ADMIN_TOKEN / API_BASE，或直接用环境变量
@@ -193,7 +202,7 @@ npm run ingest -- --dry-run          # 只看数据量，不写任何东西
 - 真正的 neurons 大户是**对话生成**：`@cf/meta/llama-3.3-70b-instruct-fp8-fast` 输出 204,805 neurons / 百万 token，约为 embedding 单价的 190 倍。对话量大时可在 `src/config.ts` 换用小模型（如 `@cf/meta/llama-3.2-1b-instruct`，18,252 neurons / 百万输出 token）。
 - 模型目录会调整，价格与「需绑定付费方式」的模型清单以 [Workers AI Pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/) 为准。
 
-## 三、API
+## 四、API
 
 | 方法 | 路径 | 鉴权 | 说明 |
 | --- | --- | --- | --- |
@@ -238,7 +247,7 @@ npm run ingest -- --dry-run          # 只看数据量，不写任何东西
 - 点击商品卡片进入 `#/product/<SKU>` 详情页：hash 路由可直接分享、刷新与浏览器前进/后退；展示主图与图库、完整参数、规格简介、阶梯价、物流配送、视频链接，并提供「向 AI 咨询 / 找同类商品 / 复制 SKU」以及同类目已上架商品的相关推荐。
 - 对话回复里的商品卡片**只展示前 3 条**（后端仍返回最多 6 条引用），每张卡片均可点击或回车跳转详情，超出部分给出文字提示；**卡片带商品缩略图**（SKU 图 → SPU 封面 → 轮播图首张，只接受 http(s) 或站内路径，含引号 / `javascript:` 的 URL 直接丢弃，加载失败显示占位符），历史会话回放同样显示。
 
-## 四、数据现状与处理策略
+## 五、数据现状与处理策略
 
 `docs/SKU_collation.json` 实测：**5985 条 SKU / 4853 个 SPU / 247 个类目 / 244 家供应商**，价格 0 ~ 105865 元，状态含「已上架 5441 / 已下架 543 / 回收站 1」。
 
@@ -247,14 +256,14 @@ npm run ingest -- --dry-run          # 只看数据量，不写任何东西
 - 检索与推荐默认过滤 `status = '已上架'`，推荐上下文同时注入 SKU 召回结果和知识库条目，LLM 被约束为只能引用编号 `[1][2]`，不得编造商品；生成失败时降级为检索结果直接作答。只有命中商品类意图才检索，寒暄 / 服务类问题不消耗 embedding 与 Vectorize 查询额度。
 - 对话历史、会话、推荐商品编号都持久化在 PostgreSQL。
 
-## 五、需要你后续提供 / 确认
+## 六、需要你后续提供 / 确认
 
 1. PostgreSQL 连接串：传给 `init-cloudflare.cmd -DatabaseUrl` 即可，脚本会创建 Hyperdrive 并自动回填 `wrangler.jsonc` 的 `hyperdrive[0].id`；也可手动执行第 2 节命令后自行填写。
 2. 自定义域名已定为 `ai.hesen.dpdns.org`：请确认 `hesen.dpdns.org` zone 在 Cloudflare 已是 Active、NS 已切到 Cloudflare；另外确认是否给管理接口再加一层 Cloudflare Access 保护（当前仅 ADMIN_TOKEN）。
-3. 是否改用外部 LLM / AI Gateway：模型 ID 集中在 `src/config.ts` 与 `wrangler.jsonc` 的 `vars`，改 `CHAT_MODEL` 即可；embedding 模型若更换，必须新建对应维度的 Vectorize 索引并 `--force` 全量重建。
+3. 是否改用外部 LLM：当前 Workers AI 已经通过 AI Gateway 统一观测和治理；模型 ID 集中在 `src/config.ts` 与 `wrangler.jsonc` 的 `vars`，改 `CHAT_MODEL` 即可。embedding 模型若更换，必须新建对应维度的 Vectorize 索引并 `--force` 全量重建。
 4. 源数据更新频率：目前是手动导入，若要定时同步可加 Cron Triggers 或在 CI 里跑 `npm run ingest`。
 
-## 六、上线前自检
+## 七、上线前自检
 
 ```bash
 curl https://ai.hesen.dpdns.org/api/health
@@ -263,7 +272,7 @@ curl -H "X-Admin-Token: $ADMIN_TOKEN" https://ai.hesen.dpdns.org/api/admin/statu
 
 `status` 里的 `unsynced_products` / `unsynced_knowledge` 应为 0，`database.stats.total` 应接近 5985。前端「运维」页也能直接看这些指标。
 
-## 七、开发治理 Agent（代码质量 + 开发习惯）
+## 八、开发治理 Agent（代码质量 + 开发习惯）
 
 项目内置了一个常驻的 **dev-governor** Agent：`.workbuddy/skills/dev-governor/SKILL.md` 是它的职责定义（WorkBuddy 项目级 Skill），`AGENTS.md` 是给各类编码 Agent 看的通用约定，执行层是 `scripts/dev-agent.mjs`（Node ≥ 20、零新增依赖、纯本地、不联网）。
 
@@ -294,7 +303,7 @@ curl -H "X-Admin-Token: $ADMIN_TOKEN" https://ai.hesen.dpdns.org/api/admin/statu
 
 习惯数据与报告属于本地个人记录，已在 `.gitignore` 中忽略；`AGENTS.md`、`.workbuddy/quality/rules.json`、`.workbuddy/quality/baseline.json`、`.workbuddy/skills/` 与 `.githooks/pre-commit` 随仓库提交，保证换机器后规则与 Agent 定义可复现。
 
-## 八、AI Search 接入（当前默认引擎）
+## 九、AI Search 接入（当前默认引擎）
 
 Cloudflare AI Search（原 AutoRAG）是托管检索服务：自动切分、embedding、BM25 + 向量混合召回、重排与相似查询缓存。本项目已把 `SEARCH_ENGINE` 切到 `ai_search` 作为默认检索引擎；结构化查询仍由 PostgreSQL + Hyperdrive 承担，Vectorize 链路完整保留作为回退。
 

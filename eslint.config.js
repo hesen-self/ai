@@ -28,10 +28,13 @@ export default [
     },
   },
 
-  // public/*.js：浏览器端脚本
+  // public/*.js：浏览器端经典脚本（非 ES 模块），按 index.html 顺序加载，
+  // 顶层声明经全局词法作用域跨文件共享；跨文件引用用文件头部
+  // /* global */ 与 /* exported */ 指令声明（sourceType 为 script 时生效）。
   {
     files: ['public/**/*.js'],
     languageOptions: {
+      sourceType: 'script',
       globals: globals.browser,
     },
   },

@@ -12,25 +12,49 @@ const els = new Map();
 const handlers = {};
 const pushedUrls = []; // 记录 history.pushState 的目标路径（path 路由）
 
+// 与真实 DOM 一致的转义：文本节点与属性值里的 < > & " 都会被转义，
+// 因此 textContent / setAttribute 写入的内容序列化后天然不含可执行标记。
+const escapeText = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const escapeAttr = (s) => escapeText(s).replace(/"/g, '&quot;');
+const VOID_TAGS = new Set(['img', 'br', 'hr', 'input']);
+const kebab = (key) => key.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+
+function serialize(node) {
+  if (node.nodeType === 3) return escapeText(node.textContent);
+  const tag = String(node.tagName || 'div').toLowerCase();
+  const attrs = [];
+  if (node.className) attrs.push(`class="${escapeAttr(node.className)}"`);
+  for (const [k, v] of Object.entries(node.dataset || {})) attrs.push(`data-${kebab(k)}="${escapeAttr(v)}"`);
+  for (const [k, v] of Object.entries(node.attrs || {})) attrs.push(`${k}="${escapeAttr(v)}"`);
+  const open = `<${tag}${attrs.length ? ` ${attrs.join(' ')}` : ''}>`;
+  if (VOID_TAGS.has(tag)) return open;
+  const inner = (node.children || []).map(serialize).join('');
+  const text = node.children?.length ? '' : escapeText(node.textContent || '');
+  return `${open}${inner}${text}</${tag}>`;
+}
+
 class FakeEl {
   constructor(tag = 'div') {
     this.tagName = tag;
     this.children = [];
     this.dataset = {};
+    this.attrs = {};
     this.hidden = false;
-    this.innerHTML = '';
     this.textContent = '';
     this.value = '';
     this.classList = { toggle() {}, add() {}, remove() {} };
   }
   addEventListener() {}
   appendChild(child) { this.children.push(child); return child; }
+  setAttribute(name, value) { this.attrs[name] = String(value); }
+  replaceChildren(...kids) { this.children = kids.filter(Boolean); }
   querySelector() { return null; }
   querySelectorAll() { return []; }
   replaceWith() {}
   focus() {}
   remove() {}
   get lastElementChild() { return this.children.at(-1) ?? null; }
+  get innerHTML() { return (this.children || []).map(serialize).join(''); }
 }
 
 const getEl = (selector) => {
@@ -50,6 +74,7 @@ const sandbox = {
     querySelectorAll: () => [],
     addEventListener: reg('doc'),
     createElement: (tag) => new FakeEl(tag),
+    createTextNode: (text) => ({ nodeType: 3, textContent: String(text) }),
   },
   window: { addEventListener: reg('win'), scrollTo() {} },
   location: { hash: '', pathname: '/', search: '' },
@@ -62,7 +87,16 @@ const sandbox = {
   fetch: async () => { throw new Error('offline'); },
 };
 
-const code = `${fs.readFileSync(path.join(root, 'public/app.js'), 'utf8')}
+// 与 index.html 的加载顺序一致：工具 → 渲染 → 站内信 → 运维 → 入口。
+// 均为经典脚本（无 import/export），拼接后在同一上下文执行。
+const FRONTEND_FILES = [
+  'public/ui.js',
+  'public/render.js',
+  'public/notify-ui.js',
+  'public/admin-ui.js',
+  'public/app.js',
+];
+const code = `${FRONTEND_FILES.map((f) => fs.readFileSync(path.join(root, f), 'utf8')).join('\n;\n')}
 ;globalThis.__test = { productCard, appendMessage, imageUrlOf, state };`;
 vm.runInNewContext(code, sandbox);
 const t = sandbox.__test;

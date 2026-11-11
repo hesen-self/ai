@@ -155,7 +155,10 @@ export async function buildKnowledgeBatch(
     const mutationIds: string[] = [];
     for (let i = 0; i < pending.length; i += EMBED_BATCH) {
       const chunk = pending.slice(i, i + EMBED_BATCH);
-      const vectors = await embedTexts(env, chunk.map((d) => `${d.title}。${d.content}`));
+      const vectors = await embedTexts(env, chunk.map((d) => `${d.title}。${d.content}`), {
+        cache: true,
+        source: 'knowledge-build',
+      });
       const mutationId = await upsertKbVectors(env, chunk, vectors);
       if (mutationId) mutationIds.push(mutationId);
     }

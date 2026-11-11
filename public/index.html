@@ -186,6 +186,11 @@
       </div>
     </div>
   </div>
-  <script type="module" src="/app.js"></script>
+  <!-- 前端按依赖顺序加载（均为经典脚本 + defer）：ui.js 工具 → render.js 渲染 → notify-ui.js 站内信 → admin-ui.js 运维 → app.js 入口 -->
+  <script defer src="/ui.js"></script>
+  <script defer src="/render.js"></script>
+  <script defer src="/notify-ui.js"></script>
+  <script defer src="/admin-ui.js"></script>
+  <script defer src="/app.js"></script>
 </body>
 </html>

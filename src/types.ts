@@ -1,6 +1,17 @@
 /** Workers 绑定的最小类型定义（避免与 workers-types 的模型联合类型耦合）。 */
+export interface AiGatewayRunOptions {
+  gateway: {
+    id: string;
+    skipCache?: boolean;
+    cacheTtl?: number;
+    cacheKey?: string;
+    collectLog?: boolean;
+    metadata?: Record<string, string>;
+  };
+}
+
 export interface AiBinding {
-  run(model: string, input: Record<string, unknown>): Promise<any>;
+  run(model: string, input: Record<string, unknown>, options?: AiGatewayRunOptions): Promise<unknown>;
 }
 
 export type VectorMetadataValue = string | number | boolean | string[];
@@ -147,6 +158,8 @@ export interface Env {
   EMBEDDING_MODEL?: string;
   CHAT_MODEL?: string;
   INTENT_MODEL?: string;
+  /** AI Gateway 名称；未设置时保留 Workers AI 的直连行为，便于本地开发。 */
+  AI_GATEWAY_ID?: string;
   VECTORIZE_INDEX_NAME?: string;
   AI_SEARCH_INSTANCE?: string;
   SEARCH_ENGINE?: string;

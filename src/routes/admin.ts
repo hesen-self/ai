@@ -16,7 +16,6 @@ import {
   NS_SKU,
 } from '../config';
 import {
-  broadcastNotification,
   getFacets,
   getProductHashes,
   markProductsSynced,
@@ -24,6 +23,7 @@ import {
   upsertProducts,
   withSql,
 } from '../db';
+import { broadcastNotification } from '../db-notifications';
 import { embedTexts, upsertSkuVectors } from '../embeddings';
 import { aiSearchStatus, syncAiSearchBatch } from '../ai-search';
 import { buildKnowledgeBatch } from '../knowledge';
@@ -135,7 +135,10 @@ router.post('/ingest', async (c) => {
     const mutationIds: string[] = [];
     for (let i = 0; i < pending.length; i += EMBED_BATCH) {
       const chunk = pending.slice(i, i + EMBED_BATCH);
-      const vectors = await embedTexts(c.env, chunk.map((p) => p.embedText));
+      const vectors = await embedTexts(c.env, chunk.map((p) => p.embedText), {
+        cache: true,
+        source: 'admin-sync',
+      });
       const mutationId = await upsertSkuVectors(c.env, chunk, vectors);
       if (mutationId) mutationIds.push(mutationId);
     }

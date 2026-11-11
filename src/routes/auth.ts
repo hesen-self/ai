@@ -17,12 +17,12 @@ const router = new Hono<HonoEnv>();
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function publicUser(row: Record<string, any>): AuthUser {
+function publicUser(row: Record<string, unknown>): AuthUser {
   return {
     id: String(row.id),
-    email: row.email,
-    displayName: row.display_name ?? null,
-    role: row.role ?? 'user',
+    email: String(row.email),
+    displayName: typeof row.display_name === 'string' ? row.display_name : null,
+    role: typeof row.role === 'string' ? row.role : 'user',
   };
 }
 
@@ -63,7 +63,7 @@ router.post('/login', async (c) => {
   const row = await withSql(c.env, (sql) => findUserByEmail(sql, email));
   if (!row) return c.json({ error: '邮箱或密码错误' }, 401);
 
-  const valid = await verifyPassword(password, row.password_salt, row.password_hash);
+  const valid = await verifyPassword(password, String(row.password_salt ?? ''), String(row.password_hash ?? ''));
   if (!valid) return c.json({ error: '邮箱或密码错误' }, 401);
 
   const user = publicUser(row);
@@ -86,11 +86,11 @@ router.get('/me', requireAuth, (c) => c.json({ user: currentUser(c) }));
 router.get('/session', async (c) => {
   const token = getCookie(c, SESSION_COOKIE);
   if (!token || !c.env.JWT_SECRET) {
-    console.log(JSON.stringify({ level: 'info', msg: 'session-check', hasCookie: !!token, hasSecret: !!c.env.JWT_SECRET }));
+    console.info(JSON.stringify({ level: 'info', msg: 'session-check', hasCookie: !!token, hasSecret: !!c.env.JWT_SECRET }));
     return c.json({ user: null });
   }
   const user = await readSession(token, c.env.JWT_SECRET as string);
-  console.log(JSON.stringify({ level: 'info', msg: 'session-check', userId: user?.id, email: user?.email, valid: !!user }));
+  console.info(JSON.stringify({ level: 'info', msg: 'session-check', userId: user?.id, email: user?.email, valid: !!user }));
   return c.json({ user });
 });
 

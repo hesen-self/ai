@@ -1,4 +1,5 @@
 import { CHAT_MODEL, INTENT_MODEL } from './config';
+import { aiGatewayOptions } from './ai-gateway';
 import { clip } from './normalize';
 import type { ChatMessage, Env } from './types';
 
@@ -172,12 +173,18 @@ export function classifyByRules(message: string, hasHistory: boolean): IntentDec
  * 逐个候选尝试，不能因为第一个候选是对象就短路。
  */
 function parseIntentPayload(result: unknown): { intent?: unknown; reason?: unknown } | null {
-  const r = result as any;
+  const r = result && typeof result === 'object' ? result as Record<string, unknown> : {};
+  const nested = r.result && typeof r.result === 'object' ? r.result as Record<string, unknown> : {};
+  const choiceContent = (choice: unknown): unknown => {
+    if (!choice || typeof choice !== 'object') return undefined;
+    const message = (choice as Record<string, unknown>).message;
+    return message && typeof message === 'object' ? (message as Record<string, unknown>).content : undefined;
+  };
   const candidates = [
-    r?.response,
-    r?.result?.response,
-    r?.choices?.[0]?.message?.content,
-    r?.result?.choices?.[0]?.message?.content,
+    r.response,
+    nested.response,
+    choiceContent(Array.isArray(r.choices) ? r.choices[0] : undefined),
+    choiceContent(Array.isArray(nested.choices) ? nested.choices[0] : undefined),
   ];
   for (const candidate of candidates) {
     if (candidate && typeof candidate === 'object') {
@@ -209,17 +216,21 @@ export async function classifyWithAi(
     .join('\n');
   const model = env.INTENT_MODEL || INTENT_MODEL || CHAT_MODEL;
   try {
-    const result = await env.AI.run(model, {
-      messages: [
-        { role: 'system', content: INTENT_SYSTEM_PROMPT },
-        {
-          role: 'user',
-          content: `最近对话：\n${recent || '（无历史）'}\n\n当前消息：${clip(message, 400)}\n\n只输出 JSON：`,
-        },
-      ],
-      max_tokens: 90,
-      temperature: 0,
-    });
+    const result = await env.AI.run(
+      model,
+      {
+        messages: [
+          { role: 'system', content: INTENT_SYSTEM_PROMPT },
+          {
+            role: 'user',
+            content: `最近对话：\n${recent || '（无历史）'}\n\n当前消息：${clip(message, 400)}\n\n只输出 JSON：`,
+          },
+        ],
+        max_tokens: 90,
+        temperature: 0,
+      },
+      aiGatewayOptions(env, { operation: 'intent', source: 'user-request' }),
+    );
     const parsed = parseIntentPayload(result);
     if (!parsed || typeof parsed.intent !== 'string' || !INTENTS.includes(parsed.intent as ChatIntent)) {
       return null;

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { currentUser, requireAuth } from '../auth';
 import { CHAT_MODEL, DEFAULT_TOP_K } from '../config';
+import { aiGatewayOptions } from '../ai-gateway';
 import { aiSearchAvailable, queryAiSearch } from '../ai-search';
 import {
   addMessage,
@@ -131,18 +132,28 @@ async function generateReply(
 ): Promise<string> {
   const model = env.CHAT_MODEL || CHAT_MODEL;
   try {
-    const result = await env.AI.run(model, {
-      messages,
-      max_tokens: maxTokens,
-      temperature: 0.3,
-    });
-    const r = result as any;
+    const result = await env.AI.run(
+      model,
+      {
+        messages,
+        max_tokens: maxTokens,
+        temperature: 0.3,
+      },
+      aiGatewayOptions(env, { operation: 'chat', source: 'user-request' }),
+    );
+    const r = result && typeof result === 'object' ? result as Record<string, unknown> : {};
+    const nested = r.result && typeof r.result === 'object' ? r.result as Record<string, unknown> : {};
+    const choiceContent = (choice: unknown): unknown => {
+      if (!choice || typeof choice !== 'object') return undefined;
+      const message = (choice as Record<string, unknown>).message;
+      return message && typeof message === 'object' ? (message as Record<string, unknown>).content : undefined;
+    };
     // response 有时是已解析的对象（结构化输出），不能让 ?? 短路掉后面的文本候选。
     const candidates = [
-      r?.response,
-      r?.choices?.[0]?.message?.content,
-      r?.result?.response,
-      r?.result?.choices?.[0]?.message?.content,
+      r.response,
+      choiceContent(Array.isArray(r.choices) ? r.choices[0] : undefined),
+      nested.response,
+      choiceContent(Array.isArray(nested.choices) ? nested.choices[0] : undefined),
     ];
     for (const text of candidates) {
       if (typeof text === 'string' && text.trim()) return text.trim();
@@ -169,9 +180,10 @@ router.post('/', async (c) => {
     ensureSession(sql, user.id, previousSessionId, clip(message, 24)),
   );
   const historyRows = await withSql(c.env, (sql) => getMessages(sql, sessionId, user.id, 8));
-  const history: ChatMessage[] = (historyRows as any[])
+  const history: ChatMessage[] = (historyRows as Array<Record<string, unknown>>)
     .reverse()
-    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .filter((m): m is Record<string, unknown> & { role: 'user' | 'assistant' } =>
+      m.role === 'user' || m.role === 'assistant')
     .map((m) => ({ role: m.role, content: String(m.content) }));
 
   // ① 意图识别：先规则、再 AI；只有「需要推荐」的意图才调用检索引擎与商品库。
@@ -328,7 +340,7 @@ router.get('/sessions/:id', async (c) => {
   const messages = await withSql(c.env, (sql) =>
     getMessages(sql, c.req.param('id'), user.id, 60),
   );
-  return c.json({ messages: (messages as any[]).reverse() });
+  return c.json({ messages: (messages as Array<Record<string, unknown>>).reverse() });
 });
 
 router.delete('/sessions/:id', async (c) => {

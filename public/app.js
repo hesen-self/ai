@@ -1,5 +1,8 @@
-const $ = (selector) => document.querySelector(selector);
-const $$ = (selector) => [...document.querySelectorAll(selector)];
+/* 前端入口：状态、SPA path 路由、鉴权、各视图的数据加载与业务编排。
+ * 渲染层在 render.js，DOM/格式化工具在 ui.js，站内信在 notify-ui.js，运维面板在 admin-ui.js。
+ * 经典脚本（index.html 以 defer 顺序加载），顶层声明进入全局词法作用域。 */
+/* global $, $$, el, toast, skeletonCards, renderCards, appendMessage, renderDetail */
+/* global startNotifyPolling, stopNotifyPolling, closeNotifyDrawer */
 
 /** 主视图 → URL 路径。默认 products 是根路径 /；其他视图用 /xxx。
  *  必须在 state 之前声明，因为 state.view 初始化时会调用 viewFromPath() 访问本常量。 */
@@ -27,42 +30,6 @@ const state = {
   notifyPollTimer: null,
 };
 
-const esc = (value) =>
-  String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-
-const money = (value) => `¥${Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`;
-const listOf = (value) => (Array.isArray(value) ? value : []);
-const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
-const cell = (value) => esc(value === null || value === undefined || value === '' ? '—' : String(value));
-// 商品图片统一取：SKU 图 → SPU 封面 → 轮播图首张；只接受 http(s) 或站内绝对路径。
-const imageUrlOf = (product) => {
-  const urls = [product?.imageUrl, product?.coverUrl, ...listOf(product?.gallery)];
-  for (const value of urls) {
-    const url = typeof value === 'string' ? value.trim() : '';
-    if (/[\s"'<>]/.test(url)) continue; // 含引号/空白的 URL 一律丢弃，避免属性被污染
-    if (/^https?:\/\//i.test(url) || (url.startsWith('/') && !url.startsWith('//'))) return url;
-  }
-  return '';
-};
-const safeUrl = (value) => {
-  const url = String(value ?? '').trim();
-  return /^https?:\/\//i.test(url) ? url : '';
-};
-const scalar = (value) => {
-  if (value === null || value === undefined || value === '') return '—';
-  if (isObject(value) || Array.isArray(value)) return JSON.stringify(value);
-  return String(value);
-};
-const describe = (value) =>
-  isObject(value)
-    ? Object.entries(value).map(([k, v]) => `${esc(k)}：${esc(scalar(v))}`).join('　')
-    : esc(scalar(value));
-
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (options.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
@@ -74,60 +41,6 @@ async function api(path, options = {}) {
   }
   if (!response.ok) throw new Error(data.error || `请求失败 HTTP ${response.status}`);
   return data;
-}
-
-let toastTimer;
-function toast(message) {
-  const el = $('#toast');
-  el.textContent = message;
-  el.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (el.hidden = true), 3200);
-}
-
-function bindImages(container) {
-  container.querySelectorAll('.product-thumb img, .mini-thumb img').forEach((img) => {
-    img.addEventListener('error', () => {
-      const placeholder = document.createElement('span');
-      placeholder.textContent = '▧';
-      img.replaceWith(placeholder);
-    });
-  });
-}
-
-function productCard(p) {
-  const image = imageUrlOf(p);
-  const thumb = image
-    ? `<img src="${esc(image)}" alt="${esc(p.name)}" loading="lazy" />`
-    : '<span>▧</span>';
-  const sourceBadges = Array.isArray(p.sources)
-    ? p.sources.map((s) => `<span class="badge">${s === 'semantic' ? '语义' : '关键词'}</span>`).join('')
-    : '';
-  const scoreBadge = p.score !== undefined
-    ? `<span class="badge score">相关度 ${Number(p.score).toFixed(3)}</span>`
-    : '';
-  return `<article class="product-card" data-sku="${esc(p.skuCode)}" role="link" tabindex="0" title="点击查看商品详情">
-    <div class="product-thumb">${thumb}</div>
-    <div class="product-body">
-      <div class="product-title" title="${esc(p.name)}">${esc(p.name)}</div>
-      <div class="product-spec" title="${esc(p.spec)}">${esc(p.spec || '暂无规格信息')}</div>
-      <div class="badges">
-        <span class="badge cat">${esc(p.category || '未分类')}</span>
-        <span class="badge ${p.status === '已上架' ? 'on' : ''}">${esc(p.status)}</span>
-        ${p.recommended ? '<span class="badge">推荐</span>' : ''}
-        ${sourceBadges}${scoreBadge}
-      </div>
-      <div class="product-meta"><span class="price">${money(p.price)}</span><span>${esc(p.unit || '件')}</span></div>
-      <div class="product-meta"><span title="${esc(p.tenant)}">${esc(p.tenant || '未标注供应商')}</span><span>库存 ${Number(p.stock || 0)}</span></div>
-    </div>
-  </article>`;
-}
-
-function renderCards(container, items, emptyText) {
-  container.innerHTML = items.length
-    ? items.map(productCard).join('')
-    : `<div class="empty">${esc(emptyText)}</div>`;
-  bindImages(container);
 }
 
 /* ------------------------------ 会话 / 登录 ------------------------------ */
@@ -187,7 +100,8 @@ $('#auth-form').addEventListener('submit', async (event) => {
 });
 
 $('#logout-btn').addEventListener('click', async () => {
-  await api('/api/auth/logout', { method: 'POST' }).catch(() => null);
+  // 登出接口失败也继续本地登出，但留下日志便于排障。
+  await api('/api/auth/logout', { method: 'POST' }).catch((error) => console.warn('登出接口调用失败', error));
   stopNotifyPolling();
   closeNotifyDrawer();
   showLogin();
@@ -290,19 +204,6 @@ function filtersFromForm() {
   };
 }
 
-/** 骨架卡片：首屏或上次失败后 grid 无内容时占位，避免加载期一片空白。 */
-function skeletonCards(count) {
-  return Array.from({ length: count }, () =>
-    `<div class="skeleton-card" aria-hidden="true">
-      <div class="skeleton-thumb"></div>
-      <div class="skeleton-body">
-        <div class="skeleton-line w80"></div>
-        <div class="skeleton-line w60"></div>
-        <div class="skeleton-line w40"></div>
-      </div>
-    </div>`).join('');
-}
-
 async function loadProducts() {
   const filters = filtersFromForm();
   const params = new URLSearchParams({
@@ -316,7 +217,7 @@ async function loadProducts() {
   if (filters.recommended) params.set('recommended', 'true');
   const grid = $('#product-grid');
   // 有旧内容时保留到结果返回（翻页/筛选不闪骨架），无内容才画骨架。
-  if (!grid.querySelector('.product-card')) grid.innerHTML = skeletonCards(12);
+  if (!grid.querySelector('.product-card')) grid.replaceChildren(...skeletonCards(12));
   try {
     const data = await api(`/api/products?${params}`);
     state.total = data.total;
@@ -329,8 +230,11 @@ async function loadProducts() {
   } catch (error) {
     if (grid.querySelector('.skeleton-card')) {
       // 首屏/重试失败：把错误留在页面上并给重试入口，而不是空白或一闪而过的 toast。
-      grid.innerHTML = `<div class="empty">商品列表加载失败：${esc(error.message)}<div class="empty-actions"><button class="btn" id="retry-products" type="button">重试</button></div></div>`;
-      $('#retry-products').addEventListener('click', loadProducts);
+      const retry = el('button', { class: 'btn', type: 'button', text: '重试' });
+      retry.addEventListener('click', loadProducts);
+      grid.replaceChildren(el('div', { class: 'empty' },
+        `商品列表加载失败：${error.message}`,
+        el('div', { class: 'empty-actions' }, retry)));
     } else {
       toast(error.message);
     }
@@ -341,9 +245,9 @@ async function loadFacets() {
   try {
     const facets = await api('/api/products/facets');
     const fill = (selector, list, label) => {
-      const el = $(selector);
-      el.innerHTML = `<option value="">${label}</option>` +
-        list.map((x) => `<option value="${esc(x.value)}">${esc(x.value)} (${x.count})</option>`).join('');
+      $(selector).replaceChildren(
+        el('option', { value: '', text: label }),
+        ...list.map((x) => el('option', { value: x.value, text: `${x.value} (${x.count})` })));
     };
     fill('#filter-category', facets.categories || [], '全部类目');
     fill('#filter-tenant', facets.tenants || [], '全部供应商');
@@ -388,174 +292,17 @@ $('#page-next').addEventListener('click', () => {
 
 /* -------------------------------- 商品详情 ------------------------------- */
 
-function galleryOf(product) {
-  const usable = (url) =>
-    typeof url === 'string' && /^(https?:\/\/|\/)/i.test(url.trim()) && !/^javascript:/i.test(url.trim());
-  return [...new Set([product.coverUrl, product.imageUrl, ...listOf(product.gallery)])]
-    .filter(usable)
-    .slice(0, 8);
-}
-
-function bindMainImage(wrap) {
-  const img = wrap.querySelector('#detail-main-img');
-  if (!img) return;
-  img.addEventListener('error', () => {
-    const placeholder = document.createElement('span');
-    placeholder.className = 'detail-placeholder';
-    placeholder.textContent = '▧';
-    img.replaceWith(placeholder);
-  });
-}
-
-function renderDetail(p) {
-  const gallery = galleryOf(p);
-  const main = gallery.length
-    ? `<img id="detail-main-img" src="${esc(gallery[0])}" alt="${esc(p.name)}" />`
-    : '<span class="detail-placeholder">▧</span>';
-  const thumbs = gallery.length > 1
-    ? `<div class="detail-thumbs">${gallery
-        .map((url, i) => `<button class="detail-thumb ${i === 0 ? 'active' : ''}" data-src="${esc(url)}" title="商品图 ${i + 1}"><img src="${esc(url)}" alt="商品图 ${i + 1}" loading="lazy" /></button>`)
-        .join('')}</div>`
-    : '';
-
-  const badges = [
-    `<span class="badge cat">${cell(p.category)}</span>`,
-    `<span class="badge ${p.status === '已上架' ? 'on' : ''}">${cell(p.status)}</span>`,
-    p.recommended ? '<span class="badge">平台推荐</span>' : '',
-    p.afterSales ? '<span class="badge">支持售后</span>' : '',
-  ].join('');
-
-  // 首屏只给采购决策核心字段，其余参数折叠进"更多参数"，避免 16 块参数墙。
-  const factItem = ([label, value]) =>
-    `<div class="fact"><span>${esc(label)}</span><strong>${cell(value)}</strong></div>`;
-  const coreFacts = [
-    ['供应商', p.tenant],
-    ['库存', p.stock],
-    ['起订量', p.minOrder],
-    ['标价', p.listPrice == null ? null : money(p.listPrice)],
-  ];
-  const factsHtml = coreFacts.map(factItem).join('');
-
-  const moreGroups = [
-    ['交易', [
-      ['价格区间', p.priceRange],
-      ['定价方式', p.pricingType],
-      ['SPU 库存', p.spuStock],
-      ['计价单位', p.unit],
-    ]],
-    ['规格', [
-      ['SKU 编码', p.skuCode],
-      ['SPU 编码', p.spuCode],
-      ['商品类目', p.category],
-      ['业务类型', p.bizType],
-      ['重量 / 体积', `${p.weightKg ?? '—'} kg / ${p.volumeM3 ?? '—'} m³`],
-    ]],
-    ['运营', [
-      ['销量 / 浏览', `${Number(p.sales || 0)} / ${Number(p.views || 0)}`],
-      ['评价数', p.reviews],
-      ['上架状态', p.status],
-    ]],
-  ];
-  const moreCount = moreGroups.reduce((n, [, rows]) => n + rows.length, 0);
-  const moreHtml = `<details class="more-facts">
-      <summary>更多参数（${moreCount} 项）</summary>
-      <div class="more-facts-groups">
-        ${moreGroups.map(([name, rows]) =>
-          `<div><h4>${esc(name)}</h4><div class="detail-facts">${rows.map(factItem).join('')}</div></div>`).join('')}
-      </div>
-    </details>`;
-
-  const tiers = listOf(p.tierPrices);
-  const tiersHtml = tiers.length
-    ? `<ul class="detail-list">${tiers.map((t) => `<li>${describe(t)}</li>`).join('')}</ul>`
-    : '<p class="muted">暂无阶梯价信息</p>';
-
-  const logisticsHtml = isObject(p.logistics)
-    ? `<ul class="detail-list">${Object.entries(p.logistics)
-        .map(([k, v]) => `<li>${esc(k)}：${esc(scalar(v))}</li>`)
-        .join('')}</ul>`
-    : `<p class="muted">${cell(p.logistics)}</p>`;
-  const deliveries = listOf(p.delivery);
-  const deliveryHtml = deliveries.length
-    ? `<ul class="detail-list">${deliveries.map((d) => `<li>${describe(d)}</li>`).join('')}</ul>`
-    : '<p class="muted">暂无配送信息</p>';
-  const video = safeUrl(p.videoUrl);
-  const videoHtml = video
-    ? `<section class="detail-section"><h3>商品视频</h3><a class="detail-link" href="${esc(video)}" target="_blank" rel="noopener noreferrer">${esc(video)} ↗</a></section>`
-    : '';
-
-  const wrap = $('#product-detail');
-  wrap.innerHTML = `<div class="detail-hero">
-      <div class="detail-gallery">
-        <div class="detail-main">${main}</div>
-        ${thumbs}
-      </div>
-      <div class="detail-info">
-        <div class="badges">${badges}</div>
-        <h2 class="detail-title">${cell(p.name)}</h2>
-        <div class="detail-price">${money(p.price)} <span class="muted">/ ${cell(p.unit || '件')}</span></div>
-        <div class="detail-actions">
-          <button class="btn primary" data-detail-action="chat">向 AI 咨询这款商品</button>
-          <button class="btn" data-detail-action="search">找同类商品</button>
-          <button class="btn ghost" data-detail-action="copy">复制 SKU</button>
-        </div>
-        <div class="detail-facts">${factsHtml}</div>
-        ${moreHtml}
-      </div>
-    </div>
-    <section class="detail-section"><h3>规格与简介</h3>
-      <p class="detail-text"><strong>销售规格：</strong>${cell(p.spec)}</p>
-      <p class="detail-text"><strong>商品简介：</strong>${cell(p.intro)}</p>
-    </section>
-    <section class="detail-section"><h3>阶梯价格</h3>${tiersHtml}</section>
-    <section class="detail-section"><h3>物流与配送</h3>
-      <h4>物流信息</h4>${logisticsHtml}<h4>配送说明</h4>${deliveryHtml}
-    </section>
-    ${videoHtml}`;
-
-  bindMainImage(wrap);
-  wrap.querySelectorAll('.detail-thumb').forEach((button) => {
-    button.addEventListener('click', () => {
-      wrap.querySelectorAll('.detail-thumb').forEach((b) => b.classList.toggle('active', b === button));
-      wrap.querySelector('.detail-main').innerHTML =
-        `<img id="detail-main-img" src="${esc(button.dataset.src)}" alt="商品图" />`;
-      bindMainImage(wrap);
-    });
-  });
-  wrap.querySelectorAll('[data-detail-action]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      const action = button.dataset.detailAction;
-      if (action === 'copy') {
-        try {
-          await navigator.clipboard.writeText(String(p.skuCode || ''));
-          toast('SKU 已复制');
-        } catch {
-          toast(`SKU：${p.skuCode}`);
-        }
-      } else if (action === 'search') {
-        switchView('search');
-        $('#search-input').value = String(p.category || p.name || '');
-        doSearch();
-      } else if (action === 'chat') {
-        switchView('chat');
-        $('#chat-input').value = `请介绍 SKU ${p.skuCode}（${p.name}），并给出采购建议。`;
-        $('#chat-input').focus();
-      }
-    });
-  });
-}
-
 async function loadProductDetail(skuCode) {
   state.currentSku = skuCode;
   $('#product-crumb').textContent = `SKU ${skuCode}`;
-  $('#product-detail').innerHTML = '<div class="empty">正在加载商品…</div>';
-  $('#product-related').innerHTML = '';
+  $('#product-detail').replaceChildren(el('div', { class: 'empty', text: '正在加载商品…' }));
+  $('#product-related').replaceChildren();
   try {
     const { product } = await api(`/api/products/${encodeURIComponent(skuCode)}`);
     renderDetail(product);
     loadRelated(product);
   } catch (error) {
-    $('#product-detail').innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+    $('#product-detail').replaceChildren(el('div', { class: 'empty', text: error.message }));
   }
 }
 
@@ -623,55 +370,8 @@ async function doSearch() {
 
 /* -------------------------------- 对话推荐 ------------------------------- */
 
-function appendMessage(role, content, products = [], intent = null) {
-  const container = $('#chat-messages');
-  const el = document.createElement('div');
-  el.className = `msg ${role}`;
-  el.textContent = content;
-  // 意图识别结果只在本轮展示；历史消息未持久化 intent，回放时保持原样。
-  if (intent && role === 'assistant') {
-    const tag = document.createElement('div');
-    tag.className = 'msg-intent';
-    tag.textContent = `意图识别：${intent.label || '未分类'} · ${intent.shouldRecommend ? '已检索商品库' : '无需商品推荐'}`;
-    el.appendChild(tag);
-  }
-  const all = Array.isArray(products) ? products : [];
-  if (all.length) {
-    // 对话回复可能引用 [1]~[6]，卡片只展示前三条，避免长列表挤占聊天区。
-    const shown = all.slice(0, 3);
-    const box = document.createElement('div');
-    box.className = 'msg-products';
-    box.innerHTML = shown
-      .map((p) => {
-        const image = imageUrlOf(p);
-        const thumb = image
-          ? `<div class="mini-thumb"><img src="${esc(image)}" alt="${esc(p.name)}" loading="lazy" /></div>`
-          : '<div class="mini-thumb"><span>▧</span></div>';
-        return `<div class="mini-card" data-sku="${esc(p.skuCode)}" role="link" tabindex="0" title="点击查看商品详情">
-        ${thumb}
-        <div class="mini-info">
-          <div class="mini-name">${p.index ? `[${esc(p.index)}] ` : ''}${esc(p.name)}</div>
-          <div class="mini-price">${money(p.price)}</div>
-          <div class="muted">${esc(p.category || '未分类')}</div>
-        </div>
-      </div>`;
-      })
-      .join('');
-    el.appendChild(box);
-    bindImages(box); // 图片 404 时换成占位符，不留破图
-    if (all.length > shown.length) {
-      const more = document.createElement('div');
-      more.className = 'msg-products-more muted';
-      more.textContent = `仅展示前 ${shown.length} 件推荐商品，其余 ${all.length - shown.length} 件可在商品检索中查看。`;
-      el.appendChild(more);
-    }
-  }
-  container.appendChild(el);
-  container.scrollTop = container.scrollHeight;
-}
-
 function welcomeMessage() {
-  $('#chat-messages').innerHTML = '';
+  $('#chat-messages').replaceChildren();
   appendMessage('system', '描述采购需求，我会先判断是否需要推荐，再检索商品库给出建议；也可以直接打招呼、问我能做什么。');
 }
 
@@ -679,25 +379,21 @@ async function loadSessions() {
   try {
     const { sessions } = await api('/api/chat/sessions');
     const list = $('#session-list');
-    list.innerHTML = sessions.length
-      ? sessions.map((s) => `<div class="session-item ${s.id === state.sessionId ? 'active' : ''}" role="button" tabindex="0" data-id="${esc(s.id)}"><span class="session-title">${esc(s.title)}</span><button class="session-del" data-del="${esc(s.id)}" title="删除">×</button></div>`).join('')
-      : '<p class="muted">暂无历史对话</p>';
-    list.querySelectorAll('.session-item').forEach((el) => {
-      const id = el.dataset.id;
-      const open = () => openSession(id);
-      el.addEventListener('click', open);
-      el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
-    });
-    list.querySelectorAll('.session-del').forEach((btn) => {
-      btn.addEventListener('click', async (e) => {
+    if (!sessions.length) {
+      list.replaceChildren(el('p', { class: 'muted', text: '暂无历史对话' }));
+      return;
+    }
+    list.replaceChildren(...sessions.map((s) => {
+      const delBtn = el('button', { class: 'session-del', dataset: { del: s.id }, title: '删除', text: '×' });
+      delBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const id = btn.dataset.del;
+        const id = s.id;
         if (!confirm('确定删除这条对话记录吗？')) return;
         try {
           await api(`/api/chat/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
           if (state.sessionId === id) {
             state.sessionId = null;
-            $('#chat-messages').innerHTML = '';
+            $('#chat-messages').replaceChildren();
             welcomeMessage();
           }
           loadSessions();
@@ -705,165 +401,24 @@ async function loadSessions() {
           toast(error.message);
         }
       });
-    });
+      const item = el('div', { class: `session-item ${s.id === state.sessionId ? 'active' : ''}`, role: 'button', tabindex: '0', dataset: { id: s.id } },
+        el('span', { class: 'session-title', text: s.title }),
+        delBtn);
+      const open = () => openSession(s.id);
+      item.addEventListener('click', open);
+      item.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+      return item;
+    }));
   } catch (error) {
     toast(error.message);
   }
 }
-
-/* ------------------------------ 站内信 -------------------------------- */
-
-const NOTIFY_POLL_INTERVAL = 30000; // 30s 轮询一次未读数
-
-async function fetchUnreadCount() {
-  try {
-    const { count } = await api('/api/notifications/unread-count');
-    state.notifyUnread = count;
-    updateNotifyBadge();
-  } catch { /* 静默 */ }
-}
-
-async function fetchNotifications() {
-  try {
-    const { notifications, unreadCount } = await api('/api/notifications');
-    state.notifications = notifications;
-    state.notifyUnread = unreadCount;
-    updateNotifyBadge();
-    renderNotifications();
-  } catch (error) {
-    toast(error.message);
-  }
-}
-
-function updateNotifyBadge() {
-  const badge = $('#notify-badge');
-  if (state.notifyUnread > 0) {
-    badge.textContent = state.notifyUnread > 99 ? '99+' : state.notifyUnread;
-    badge.hidden = false;
-  } else {
-    badge.hidden = true;
-  }
-}
-
-function renderNotifications() {
-  const list = $('#notify-list');
-  if (!state.notifications.length) {
-    list.innerHTML = '<p class="muted notify-empty">暂无通知</p>';
-    return;
-  }
-  list.innerHTML = state.notifications.map((n) => {
-    const unread = !n.readAt;
-    const link = n.payload?.link;
-    const time = formatTime(n.createdAt);
-    const typeIcon = { system: '📢', product: '📦', chat: '💬', admin: '🛠' }[n.type] ?? '🔔';
-    return `
-      <div class="notify-item ${unread ? 'unread' : ''}" data-id="${esc(n.id)}" data-link="${esc(link || '')}">
-        <span class="notify-item-type">${typeIcon}</span>
-        <div class="notify-item-body">
-          <div class="notify-item-head">
-            <span class="notify-item-title">${esc(n.title)}</span>
-            <span class="notify-item-time">${esc(time)}</span>
-          </div>
-          ${n.content ? `<p class="notify-item-content">${esc(n.content)}</p>` : ''}
-        </div>
-        ${unread ? '<span class="notify-item-dot" aria-hidden="true"></span>' : ''}
-      </div>`;
-  }).join('');
-
-  // 点击条目：标记已读 + 跳转（如果有 link）
-  list.querySelectorAll('.notify-item').forEach((el) => {
-    el.addEventListener('click', async () => {
-      const id = Number(el.dataset.id);
-      let link = el.dataset.link;
-      if (link) {
-        closeNotifyDrawer();
-        // 兼容旧 hash 格式（#/chat）和新 path 格式（/chat）
-        if (link.startsWith('#')) link = link.slice(1);
-        history.pushState(null, '', link);
-        applyPath();
-      }
-      try {
-        await api(`/api/notifications/${id}/read`, { method: 'POST' });
-        // 乐观更新
-        const item = state.notifications.find((n) => n.id === id);
-        if (item) { item.readAt = new Date().toISOString(); state.notifyUnread = Math.max(0, state.notifyUnread - 1); }
-        updateNotifyBadge();
-        renderNotifications();
-      } catch { /* 静默 */ }
-    });
-  });
-}
-
-function formatTime(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  const now = new Date();
-  const diff = Math.floor((now - d) / 1000);
-  if (diff < 60) return '刚刚';
-  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
-  if (diff < 7 * 86400) return `${Math.floor(diff / 86400)} 天前`;
-  return `${d.getMonth() + 1}/${d.getDate()}`;
-}
-
-function openNotifyDrawer() {
-  state.notifyDrawerOpen = true;
-  $('#notify-drawer').hidden = false;
-  $('#notify-backdrop').hidden = false;
-  fetchNotifications();
-}
-
-function closeNotifyDrawer() {
-  state.notifyDrawerOpen = false;
-  $('#notify-drawer').hidden = true;
-  $('#notify-backdrop').hidden = true;
-}
-
-function startNotifyPolling() {
-  fetchUnreadCount();
-  stopNotifyPolling();
-  state.notifyPollTimer = setInterval(() => {
-    if (!state.notifyDrawerOpen) fetchUnreadCount();
-  }, NOTIFY_POLL_INTERVAL);
-}
-
-function stopNotifyPolling() {
-  if (state.notifyPollTimer) {
-    clearInterval(state.notifyPollTimer);
-    state.notifyPollTimer = null;
-  }
-}
-
-// 事件绑定（铃铛 / 关闭 / 全部已读 / 背景点击）
-document.addEventListener('DOMContentLoaded', () => {
-  const bell = $('#notify-bell');
-  if (!bell) return;
-  bell.addEventListener('click', () => {
-    if (state.notifyDrawerOpen) closeNotifyDrawer(); else openNotifyDrawer();
-  });
-  $('#notify-close')?.addEventListener('click', closeNotifyDrawer);
-  $('#notify-backdrop')?.addEventListener('click', closeNotifyDrawer);
-  $('#notify-mark-all')?.addEventListener('click', async () => {
-    try {
-      const { marked } = await api('/api/notifications/read-all', { method: 'POST' });
-      if (marked > 0) {
-        state.notifyUnread = 0;
-        state.notifications.forEach((n) => (n.readAt = n.readAt || new Date().toISOString()));
-        updateNotifyBadge();
-        renderNotifications();
-      }
-    } catch (error) {
-      toast(error.message);
-    }
-  });
-});
-
 
 async function openSession(id) {
   try {
     const { messages } = await api(`/api/chat/sessions/${encodeURIComponent(id)}`);
     state.sessionId = id;
-    $('#chat-messages').innerHTML = '';
+    $('#chat-messages').replaceChildren();
     // 历史消息里的 products 带 imageUrl，缩略图在回放时同样渲染。
     messages.forEach((m) => appendMessage(m.role, m.content, m.products));
     if (!messages.length) welcomeMessage();
@@ -916,105 +471,6 @@ async function sendChat() {
     input.focus();
   }
 }
-
-/* --------------------------------- 运维 ---------------------------------- */
-
-/** 轻量确认弹窗：Esc / 背景点击 / 取消均为取消，默认焦点在"取消"（安全默认）。 */
-function confirmDialog(title, text, okLabel = '确认执行') {
-  return new Promise((resolve) => {
-    const modal = $('#confirm-modal');
-    const cancelBtn = $('#confirm-cancel');
-    const okBtn = $('#confirm-ok');
-    $('#confirm-title').textContent = title;
-    $('#confirm-text').textContent = text;
-    okBtn.textContent = okLabel;
-    modal.hidden = false;
-    cancelBtn.focus();
-    const close = (result) => {
-      modal.hidden = true;
-      document.removeEventListener('keydown', onKeydown);
-      cancelBtn.removeEventListener('click', onCancel);
-      okBtn.removeEventListener('click', onOk);
-      modal.removeEventListener('click', onBackdrop);
-      resolve(result);
-    };
-    const onKeydown = (event) => { if (event.key === 'Escape') close(false); };
-    const onCancel = () => close(false);
-    const onOk = () => close(true);
-    const onBackdrop = (event) => { if (event.target === modal) close(false); };
-    document.addEventListener('keydown', onKeydown);
-    cancelBtn.addEventListener('click', onCancel);
-    okBtn.addEventListener('click', onOk);
-    modal.addEventListener('click', onBackdrop);
-  });
-}
-
-function adminHeaders() {
-  state.adminToken = $('#admin-token').value.trim();
-  sessionStorage.setItem('cf_admin_token', state.adminToken);
-  return { 'X-Admin-Token': state.adminToken };
-}
-
-function output(value) {
-  $('#admin-output').textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-}
-
-async function adminAction(label, path, body) {
-  try {
-    output(`${label}…`);
-    const result = await api(path, {
-      method: 'POST',
-      headers: adminHeaders(),
-      body: JSON.stringify(body || {}),
-    });
-    output(result);
-    toast(`${label}完成`);
-  } catch (error) {
-    output(`${label}失败：${error.message}`);
-  }
-}
-
-$('#admin-status-btn').addEventListener('click', async () => {
-  try {
-    const result = await api('/api/admin/status', { headers: adminHeaders() });
-    output(result);
-  } catch (error) {
-    output(`状态读取失败：${error.message}`);
-  }
-});
-
-$('#admin-migrate-btn').addEventListener('click', async () => {
-  const confirmed = await confirmDialog(
-    '执行数据库迁移？',
-    '迁移会按顺序执行 sql/ 下尚未应用的迁移文件，可能改动表结构。确认继续？',
-  );
-  if (confirmed) await adminAction('数据库迁移', '/api/admin/migrate');
-});
-$('#admin-knowledge-btn').addEventListener('click', async () => {
-  await adminAction('知识库构建（第 1 批）', '/api/admin/build-knowledge', { offset: 0, limit: 120 });
-  toast('如需全量构建，请运行 npm run ingest:knowledge');
-});
-$('#admin-ai-status-btn').addEventListener('click', async () => {
-  try {
-    const result = await api('/api/admin/ai-search/status', { headers: adminHeaders() });
-    output(result.aiSearch ?? result);
-  } catch (error) {
-    output(`AI Search 状态读取失败：${error.message}`);
-  }
-});
-$('#admin-ai-sync-btn').addEventListener('click', () =>
-  adminAction('AI Search 知识库同步（第 1 批）', '/api/admin/ai-search/sync', {
-    kind: 'kb', offset: 0, limit: 40,
-  }),
-);
-$('#admin-schema-btn').addEventListener('click', async () => {
-  try {
-    const response = await fetch('/api/admin/schema', { headers: adminHeaders() });
-    output(await response.text());
-  } catch (error) {
-    output(`DDL 读取失败：${error.message}`);
-  }
-});
 
 /* --------------------------------- 启动 ---------------------------------- */
 

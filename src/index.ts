@@ -24,7 +24,7 @@ app.use('*', async (c, next) => {
     const status = c.res.status;
     // 只对 /api/* 路径打业务日志（静态资源不打，避免噪声）
     if (path.startsWith('/api/')) {
-      console.log(JSON.stringify({
+      console.info(JSON.stringify({
         level: duration > 2000 ? 'warn' : 'info',
         ms: duration,
         method,
