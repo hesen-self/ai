@@ -149,7 +149,7 @@ main { max-width: 1440px; margin: 0 auto; padding: 26px; }
 .msg.system { align-self: center; color: var(--muted); font-size: 12px; }
 .msg-products { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin-top: 10px; white-space: normal; }
 .msg-intent { display: inline-block; margin-top: 8px; padding: 3px 9px; border-radius: 999px; font-size: 11px; color: var(--primary); background: var(--primary-soft); border: 1px solid rgba(109,140,255,.3); white-space: normal; }
-.mini-card { background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 8px; font-size: 12px; display: flex; gap: 10px; align-items: stretch; min-width: 0; white-space: normal; overflow: hidden; }
+.mini-card { background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 8px; font-size: 12px; display: flex; gap: 10px; align-items: center; min-width: 0; white-space: normal; overflow: hidden; }
 .mini-thumb { width: 72px; height: 72px; flex: 0 0 72px; border-radius: 7px; background: #fff; display: grid; place-items: center; overflow: hidden; color: #b8c0cc; font-size: 22px; }
 .mini-thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .mini-info { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; justify-content: center; }
